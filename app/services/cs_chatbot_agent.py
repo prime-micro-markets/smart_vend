@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.chat import ChatMessage
 from app.models.cs_governance import CSGovernanceRule
+from app.models.equipment import EquipmentUnit
 from app.models.settings import AppSetting
 from app.services import google_calendar as gcal_svc
 
@@ -36,6 +37,23 @@ _CATEGORY_LABELS = {
     "knowledge": "Company Knowledge",
     "custom": "Additional Rules",
 }
+
+# Human-readable labels for equipment_type, mirrored from app/routers/equipment.py
+# so the chatbot describes machines the same way the catalog does.
+_EQUIPMENT_TYPE_LABELS = {
+    "smart_cooler": "AI Smart Cooler",
+    "freezer": "Smart Freezer",
+    "combo": "Combo Machine",
+    "drink": "Drink Machine",
+    "snack": "Snack Machine",
+    "glass_cooler": "Glass-Door Cooler",
+    "kiosk": "Micro Market Kiosk",
+    "micro_market": "Micro Market",
+}
+
+# Cap how many units we describe in the prompt so the context stays small and the
+# public (Groq free-tier) model stays fast. The catalog is small; this is a guard.
+_MAX_EQUIPMENT_FOR_PROMPT = 30
 
 # ── Provider / model defaults ────────────────────────────────────────────────
 
@@ -64,6 +82,76 @@ def get_active_provider(db: Session) -> tuple[str, str]:
     provider = (p_row.value if p_row else None) or _DEFAULT_PROVIDER
     model = (m_row.value if m_row else None) or _DEFAULT_MODEL
     return provider, model
+
+
+# ── Equipment knowledge ──────────────────────────────────────────────────────
+
+
+def _format_unit_line(unit: EquipmentUnit) -> str:
+    """One compact bullet describing a unit's customer-relevant specs.
+
+    Only includes fields that are populated so the chatbot never invents specs or
+    parrots empty placeholders. Capacity is the field most asked about ("how many
+    drinks fit?"), so it leads.
+    """
+    name_bits = [unit.manufacturer, unit.product_name]
+    name = " ".join(b for b in name_bits if b).strip() or unit.product_name
+    type_label = _EQUIPMENT_TYPE_LABELS.get(
+        unit.equipment_type, unit.equipment_type.replace("_", " ").title()
+    )
+
+    specs: list[str] = []
+    if unit.capacity_units:
+        specs.append(f"holds ~{unit.capacity_units} items/products")
+    if unit.capacity_cu_ft:
+        specs.append(f"{unit.capacity_cu_ft:g} cu ft capacity")
+    if unit.height_in and unit.width_in and unit.depth_in:
+        specs.append(f'{unit.height_in:g}"H x {unit.width_in:g}"W x {unit.depth_in:g}"D')
+    if unit.weight_lbs:
+        specs.append(f"{unit.weight_lbs:g} lbs")
+    if unit.payment_types:
+        specs.append(f"payments: {unit.payment_types}")
+    if unit.ai_features:
+        acc = f" (~{unit.ai_accuracy_pct:g}% accuracy)" if unit.ai_accuracy_pct else ""
+        specs.append(f"AI grab-and-go checkout{acc}")
+    if unit.connectivity:
+        specs.append(f"connectivity: {unit.connectivity}")
+
+    # Price: only share an actual figure; null means "contact for a quote".
+    if unit.price_low:
+        prefix = "starting at " if unit.price_is_starting else ""
+        if unit.price_high and unit.price_high != unit.price_low:
+            specs.append(f"price: {prefix}${unit.price_low:,}-${unit.price_high:,}")
+        else:
+            specs.append(f"price: {prefix}${unit.price_low:,}")
+
+    detail = "; ".join(specs) if specs else "specs available on request"
+    return f"- {name} ({type_label}): {detail}"
+
+
+def build_equipment_knowledge(db: Session) -> str:
+    """Render the active equipment catalog as a prompt section.
+
+    The chatbot previously had no awareness of the catalog, so questions like
+    "how many drinks can a machine hold?" went unanswered. This feeds the live
+    catalog (active units only, archived excluded) into the system prompt.
+    """
+    units = (
+        db.query(EquipmentUnit)
+        .filter(EquipmentUnit.status == "active")
+        .order_by(EquipmentUnit.equipment_type, EquipmentUnit.manufacturer)
+        .limit(_MAX_EQUIPMENT_FOR_PROMPT)
+        .all()
+    )
+    if not units:
+        return ""
+
+    lines = [_format_unit_line(u) for u in units]
+    return (
+        "EQUIPMENT CATALOG (use these real specs to answer questions about machine "
+        "capacity, size, features, and pricing — do not invent numbers; if a detail "
+        "isn't listed, say you'll have a team member confirm):\n" + "\n".join(lines)
+    )
 
 
 # ── System prompt ────────────────────────────────────────────────────────────
@@ -97,6 +185,10 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
             rule_sections.append(f"**{label}:**\n{items}")
 
         base += "RULES YOU MUST FOLLOW:\n" + "\n\n".join(rule_sections) + "\n\n"
+
+    equipment_knowledge = build_equipment_knowledge(db)
+    if equipment_knowledge:
+        base += equipment_knowledge + "\n\n"
 
     if include_tools:
         scheduling_note = (
