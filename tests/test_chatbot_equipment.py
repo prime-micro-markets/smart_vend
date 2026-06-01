@@ -60,8 +60,9 @@ def test_knowledge_omits_missing_specs(db: Session) -> None:
     assert "cu ft" not in knowledge
 
 
-def test_price_range_and_starting(db: Session) -> None:
-    _unit(db, product_name="Ranged", price_low=3000, price_high=4500)
+def test_pricing_never_surfaced(db: Session) -> None:
+    # Equipment is installed at no cost to the host; the bot must not quote prices.
+    _unit(db, product_name="Ranged", capacity_units=250, price_low=3000, price_high=4500)
     _unit(
         db,
         product_name="Market",
@@ -70,8 +71,22 @@ def test_price_range_and_starting(db: Session) -> None:
         price_is_starting=True,
     )
     knowledge = build_equipment_knowledge(db)
-    assert "$3,000-$4,500" in knowledge
-    assert "starting at $8,000" in knowledge
+    # Specs still surface...
+    assert "Ranged" in knowledge
+    assert "holds ~250" in knowledge
+    # ...but no dollar figures or price language appears anywhere.
+    assert "$" not in knowledge
+    assert "3,000" not in knowledge
+    assert "8,000" not in knowledge
+    assert "price:" not in knowledge
+
+
+def test_no_cost_and_appointment_messaging(db: Session) -> None:
+    _unit(db, capacity_units=300)
+    knowledge = build_equipment_knowledge(db)
+    assert "NO COST" in knowledge
+    assert "on-site evaluation" in knowledge
+    assert "appointment" in knowledge.lower()
 
 
 def test_system_prompt_embeds_catalog(db: Session) -> None:

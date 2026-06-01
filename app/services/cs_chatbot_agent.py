@@ -117,13 +117,9 @@ def _format_unit_line(unit: EquipmentUnit) -> str:
     if unit.connectivity:
         specs.append(f"connectivity: {unit.connectivity}")
 
-    # Price: only share an actual figure; null means "contact for a quote".
-    if unit.price_low:
-        prefix = "starting at " if unit.price_is_starting else ""
-        if unit.price_high and unit.price_high != unit.price_low:
-            specs.append(f"price: {prefix}${unit.price_low:,}-${unit.price_high:,}")
-        else:
-            specs.append(f"price: {prefix}${unit.price_low:,}")
+    # Deliberately no pricing. Equipment is installed at no cost to the host
+    # business; the specific model is chosen during the on-site evaluation, so the
+    # chatbot must never quote prices or imply the partner pays for a machine.
 
     detail = "; ".join(specs) if specs else "specs available on request"
     return f"- {name} ({type_label}): {detail}"
@@ -149,8 +145,20 @@ def build_equipment_knowledge(db: Session) -> str:
     lines = [_format_unit_line(u) for u in units]
     return (
         "EQUIPMENT CATALOG (use these real specs to answer questions about machine "
-        "capacity, size, features, and pricing — do not invent numbers; if a detail "
-        "isn't listed, say you'll have a team member confirm):\n" + "\n".join(lines)
+        "capacity, size, features, and connectivity — do not invent numbers; if a "
+        "detail isn't listed, say you'll have a team member confirm):\n"
+        + "\n".join(lines)
+        + "\n\nEQUIPMENT COST & MODEL SELECTION (always follow this):\n"
+        "  - The equipment we install comes at NO COST to the host business — the "
+        "partner never buys or leases a machine.\n"
+        "  - NEVER quote prices, dollar figures, or cost ranges for any unit, even if "
+        "asked directly. We do not sell equipment to the partner.\n"
+        "  - The specific equipment model is determined when our team comes out for an "
+        "on-site evaluation of the location.\n"
+        "  - When a customer asks about cost, pricing, or which machine they'd get, "
+        "respond along these lines: the equipment is installed at no cost to the "
+        "business, and the exact model is chosen during a free on-site evaluation. "
+        'Then offer to schedule it, e.g. "Would you like to set up an appointment?"'
     )
 
 
