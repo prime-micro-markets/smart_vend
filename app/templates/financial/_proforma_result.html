@@ -50,6 +50,39 @@
   </div>
 </div>
 
+<!-- Daily & weekly sales / returns -->
+<div class="card mb-3">
+  <div class="card-header py-2 small fw-semibold">
+    <i class="bi bi-calendar-week me-1"></i>Daily &amp; Weekly Sales &amp; Returns
+    <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip"
+       title="Sales = gross revenue. Returns = net profit after all costs. Averaged across the full year, so seasonality and the spread of fixed monthly costs are baked in."></i>
+  </div>
+  <div class="card-body py-2">
+    <div class="row g-2 text-center">
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Daily Sales</div>
+        <div class="fw-bold">${{ "%.0f" | format(summary.daily_sales) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Weekly Sales</div>
+        <div class="fw-bold">${{ "%.0f" | format(summary.weekly_sales) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Daily Returns</div>
+        <div class="fw-bold {% if summary.daily_net >= 0 %}text-success{% else %}text-danger{% endif %}">
+          ${{ "%.2f" | format(summary.daily_net) }}
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Weekly Returns</div>
+        <div class="fw-bold {% if summary.weekly_net >= 0 %}text-success{% else %}text-danger{% endif %}">
+          ${{ "%.0f" | format(summary.weekly_net) }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-3">
   <!-- Per-unit economics -->
   <div class="col-lg-5">

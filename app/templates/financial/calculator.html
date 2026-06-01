@@ -15,11 +15,8 @@
     <form id="calc-form"
           method="post"
           action="/financial/calculator"
-          hx-get="/financial/calculate"
-          hx-trigger="input delay:500ms from:#calc-form, load"
-          hx-include="#calc-form"
-          hx-target="#results-panel"
-          hx-swap="innerHTML">
+          class="needs-validation"
+          novalidate>
 
       <!-- Start From Equipment -->
       <div class="card mb-3">
@@ -62,18 +59,20 @@
         <div class="card-body pb-2">
           <div class="row g-2">
             <div class="col-12">
-              <label class="form-label small">Scenario Name</label>
+              <label class="form-label small">Scenario Name <span class="text-danger" title="Required">*</span></label>
               <input type="text" name="name" class="form-control form-control-sm" required
                      value="{{ scenario.name if scenario else '' }}"
                      placeholder="e.g. Scenario A — Hospital Lobby">
+              <div class="invalid-feedback small">Give this scenario a name before saving.</div>
             </div>
             <div class="col-md-4">
-              <label class="form-label small">Machine Cost ($)</label>
+              <label class="form-label small">Machine Cost ($) <span class="text-danger" title="Required">*</span></label>
               <input type="number" name="machine_cost" id="machine_cost" class="form-control form-control-sm" min="0" step="100"
                      value="{{ scenario.machine_cost if scenario else 8000 }}" required>
+              <div class="invalid-feedback small">Enter the machine cost.</div>
             </div>
             <div class="col-md-4">
-              <label class="form-label small">Installation ($)</label>
+              <label class="form-label small">Additional Installation Costs ($)</label>
               <input type="number" name="installation_cost" class="form-control form-control-sm" min="0" step="50"
                      value="{{ scenario.installation_cost if scenario else 0 }}">
             </div>
@@ -93,33 +92,36 @@
           <div class="row g-2">
             <div class="col-md-4">
               <label class="form-label small d-flex align-items-center gap-1">
-                Daily Transactions
+                Daily Transactions <span class="text-danger" title="Required">*</span>
                 <i class="bi bi-info-circle text-muted"
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Estimated number of sales per day across all products in this machine."></i>
               </label>
               <input type="number" name="daily_transactions" class="form-control form-control-sm" min="0" step="1"
                      value="{{ scenario.daily_transactions if scenario else 20 }}" required>
+              <div class="invalid-feedback small">Enter expected daily transactions.</div>
             </div>
             <div class="col-md-4">
               <label class="form-label small d-flex align-items-center gap-1">
-                Avg Ticket ($)
+                Avg Ticket ($) <span class="text-danger" title="Required">*</span>
                 <i class="bi bi-info-circle text-muted"
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Average dollar amount per sale. Multiply by daily transactions to get gross daily revenue."></i>
               </label>
               <input type="number" name="avg_ticket_usd" class="form-control form-control-sm" min="0" step="0.25"
                      value="{{ scenario.avg_ticket_usd if scenario else 3.50 }}" required>
+              <div class="invalid-feedback small">Enter the average ticket size.</div>
             </div>
             <div class="col-md-4">
               <label class="form-label small d-flex align-items-center gap-1">
-                COGS % (0–100)
+                COGS % (0–100) <span class="text-danger" title="Required">*</span>
                 <i class="bi bi-info-circle text-muted"
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Cost of Goods Sold — the percentage of revenue spent on wholesale product cost. Vending machines typically run 30–55% depending on product mix and retail pricing."></i>
               </label>
               <input type="number" name="cogs_pct" class="form-control form-control-sm" min="0" max="100" step="1"
                      value="{{ (scenario.cogs_pct * 100) | int if scenario else 42 }}" required>
+              <div class="invalid-feedback small">Enter the COGS percentage.</div>
             </div>
           </div>
         </div>
@@ -264,14 +266,29 @@
         <textarea name="notes" class="form-control form-control-sm" rows="2">{{ scenario.notes or '' if scenario else '' }}</textarea>
       </div>
 
-      <button type="submit" class="btn btn-primary">
-        <i class="bi bi-floppy me-1"></i>Save Scenario
-      </button>
+      <div class="d-flex align-items-center gap-3 flex-wrap">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-floppy me-1"></i>Save Scenario
+        </button>
+        <span class="text-muted small"><span class="text-danger">*</span> Required to save &amp; calculate</span>
+      </div>
+      <div id="save-error" class="alert alert-danger py-2 px-3 small mt-3 d-none" role="alert">
+        <i class="bi bi-exclamation-triangle me-1"></i>Please complete the required fields marked with
+        <span class="text-danger fw-bold">*</span> before saving.
+      </div>
     </form>
   </div>
 
   <!-- Results Panel -->
-  <div class="col-lg-7" id="results-panel">
+  <!-- Live preview lives on this panel (not the form) so the form's own submit
+       stays native — that's what actually saves the scenario and fires the
+       browser's required-field validation. -->
+  <div class="col-lg-7" id="results-panel"
+       hx-get="/financial/calculate"
+       hx-trigger="input delay:500ms from:#calc-form, load"
+       hx-include="#calc-form"
+       hx-target="#results-panel"
+       hx-swap="innerHTML">
     {% include "financial/_proforma_result.html" %}
   </div>
 </div>
@@ -294,7 +311,22 @@
     htmx.trigger(document.getElementById('calc-form'), 'input');
   }
 
-  document.getElementById('calc-form').addEventListener('submit', function () {
+  const calcForm = document.getElementById('calc-form');
+  const saveError = document.getElementById('save-error');
+
+  calcForm.addEventListener('submit', function (evt) {
+    // Block the save and flag the missing fields if anything required is empty/invalid.
+    if (!calcForm.checkValidity()) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      calcForm.classList.add('was-validated');
+      saveError.classList.remove('d-none');
+      const firstInvalid = calcForm.querySelector(':invalid');
+      if (firstInvalid) firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    saveError.classList.add('d-none');
+
     const vals = Array.from({length: 12}, (_, i) => {
       const el = document.querySelector(`[name="season_${i}"]`);
       return el ? (parseFloat(el.value) || 1.0) : 1.0;

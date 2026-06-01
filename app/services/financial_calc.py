@@ -11,6 +11,8 @@ MONTHS = [
 ]
 
 DAYS_PER_MONTH = 30.4
+DAYS_PER_YEAR = 365.0
+WEEKS_PER_YEAR = 52.0
 
 
 def build_12month_table(
@@ -76,7 +78,15 @@ def calc_summary(
 ) -> dict[str, Any]:
     total_investment = machine_cost + installation_cost + initial_inventory_cost
     annual_net = sum(r["net"] for r in table)
+    annual_revenue = sum(r["revenue"] for r in table)
     avg_monthly_net = annual_net / 12 if table else 0.0
+
+    # Daily / weekly sales (gross revenue) and returns (net profit), averaged over
+    # the full year so they reflect seasonality and the spread of fixed monthly costs.
+    daily_sales = annual_revenue / DAYS_PER_YEAR
+    weekly_sales = annual_revenue / WEEKS_PER_YEAR
+    daily_net = annual_net / DAYS_PER_YEAR
+    weekly_net = annual_net / WEEKS_PER_YEAR
 
     # Payback: month when cumulative cash flow covers total investment
     payback_months: int | None = None
@@ -96,7 +106,12 @@ def calc_summary(
     return {
         "total_investment": total_investment,
         "annual_net": annual_net,
+        "annual_revenue": annual_revenue,
         "avg_monthly_net": avg_monthly_net,
+        "daily_sales": daily_sales,
+        "weekly_sales": weekly_sales,
+        "daily_net": daily_net,
+        "weekly_net": weekly_net,
         "steady_state_net": steady_state_net,
         "payback_months": payback_months,
         "gross_margin_pct": gross_margin_pct,

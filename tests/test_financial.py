@@ -80,6 +80,17 @@ def test_processing_fees_reduce_net() -> None:
     assert abs((plain[0]["net"] - with_fees[0]["net"]) - expected_processing) < 0.01
 
 
+def test_calc_summary_daily_weekly_sales_returns() -> None:
+    rows = build_12month_table(daily_transactions=20, avg_ticket_usd=4.0, cogs_pct=0.40)
+    summary = calc_summary(rows, machine_cost=5000.0)
+    annual_revenue = sum(r["revenue"] for r in rows)
+    assert abs(summary["annual_revenue"] - annual_revenue) < 0.01
+    assert abs(summary["daily_sales"] - annual_revenue / 365.0) < 0.01
+    assert abs(summary["weekly_sales"] - annual_revenue / 52.0) < 0.01
+    assert abs(summary["daily_net"] - summary["annual_net"] / 365.0) < 0.01
+    assert abs(summary["weekly_net"] - summary["annual_net"] / 52.0) < 0.01
+
+
 def test_calc_unit_economics_breakeven() -> None:
     econ = calc_unit_economics(
         avg_ticket_usd=4.0,
@@ -272,6 +283,9 @@ def test_financial_calculate_with_processing(client: TestClient) -> None:
     assert "Processing" in resp.text
     assert "Contribution" in resp.text
     assert "Break-even" in resp.text
+    # Daily/weekly sales & returns card renders in the projection.
+    assert "Daily Sales" in resp.text
+    assert "Weekly Returns" in resp.text
 
 
 def test_calculator_lists_equipment_options(client: TestClient, db: Session) -> None:
