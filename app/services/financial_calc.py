@@ -15,6 +15,21 @@ DAYS_PER_YEAR = 365.0
 WEEKS_PER_YEAR = 52.0
 
 
+def calc_loan_payment(principal: float, apr: float, term_months: float) -> float:
+    """Fixed monthly payment for an amortized loan (machine financing).
+
+    apr is an annual fraction (0.08 = 8% APR); the monthly rate is apr/12. With a
+    zero term or principal there's no payment; with a 0% APR it's straight-line
+    (principal / term). Returns 0.0 when nothing is financed.
+    """
+    if term_months <= 0 or principal <= 0:
+        return 0.0
+    monthly_rate = apr / 12
+    if monthly_rate <= 0:
+        return principal / term_months
+    return principal * monthly_rate / (1 - (1 + monthly_rate) ** -term_months)
+
+
 def build_12month_table(
     daily_transactions: float,
     avg_ticket_usd: float,
@@ -28,6 +43,7 @@ def build_12month_table(
     software_monthly: float = 0.0,
     processing_fee_pct: float = 0.0,
     processing_fee_per_txn: float = 0.0,
+    monthly_loan_payment: float = 0.0,
     seasonality_json: str | None = None,
 ) -> list[dict[str, Any]]:
     multipliers: list[float] = json.loads(seasonality_json) if seasonality_json else [1.0] * 12
@@ -35,9 +51,11 @@ def build_12month_table(
     base_monthly_txns = daily_transactions * DAYS_PER_MONTH
     base_monthly_revenue = base_monthly_txns * avg_ticket_usd
     # Fixed costs don't scale with volume; commission and processing do (handled per-month).
+    # A machine loan payment, when financed, is just another fixed monthly cost.
     fixed_opex = (
         restock_labor_monthly + supplies_monthly + insurance_monthly
         + other_opex_monthly + connectivity_monthly + software_monthly
+        + monthly_loan_payment
     )
 
     rows = []
@@ -75,8 +93,12 @@ def calc_summary(
     machine_cost: float,
     installation_cost: float = 0.0,
     initial_inventory_cost: float = 0.0,
+    financed: bool = False,
 ) -> dict[str, Any]:
-    total_investment = machine_cost + installation_cost + initial_inventory_cost
+    # When the machine is financed it isn't an upfront cash outlay — it's repaid via the
+    # monthly loan payment already folded into opex — so it drops out of the investment base.
+    upfront_machine_cost = 0.0 if financed else machine_cost
+    total_investment = upfront_machine_cost + installation_cost + initial_inventory_cost
     annual_net = sum(r["net"] for r in table)
     annual_revenue = sum(r["revenue"] for r in table)
     avg_monthly_net = annual_net / 12 if table else 0.0

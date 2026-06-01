@@ -44,6 +44,14 @@ class MachineProForma(Base):
     processing_fee_pct: Mapped[float] = mapped_column(Float, default=0.0)
     processing_fee_per_txn: Mapped[float] = mapped_column(Float, default=0.0)
 
+    # Machine financing. When finance_term_months > 0 the machine is treated as financed:
+    # an amortized monthly loan payment (machine_cost @ finance_apr_pct over the term) is
+    # added to monthly operating costs, and the machine cost is excluded from the upfront
+    # investment. finance_apr_pct is an annual fraction (0.08 = 8% APR). Both default to 0
+    # (pay cash), so existing scenarios are unchanged.
+    finance_apr_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    finance_term_months: Mapped[float] = mapped_column(Float, default=0.0)
+
     # JSON list of 12 monthly multipliers, e.g. [0.7, 0.8, ..., 1.2]; NULL = flat (all 1.0)
     seasonality_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 

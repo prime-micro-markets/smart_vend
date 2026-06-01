@@ -5,6 +5,7 @@ from app.models.equipment import EquipmentUnit
 from app.models.financial import MachineProForma
 from app.services.financial_calc import (
     build_12month_table,
+    calc_loan_payment,
     calc_summary,
     calc_unit_economics,
     cashflow_points,
@@ -89,6 +90,39 @@ def test_calc_summary_daily_weekly_sales_returns() -> None:
     assert abs(summary["weekly_sales"] - annual_revenue / 52.0) < 0.01
     assert abs(summary["daily_net"] - summary["annual_net"] / 365.0) < 0.01
     assert abs(summary["weekly_net"] - summary["annual_net"] / 52.0) < 0.01
+
+
+def test_calc_loan_payment_amortized() -> None:
+    # $10,000 at 8% APR over 60 months → standard amortized payment ≈ $202.76.
+    pmt = calc_loan_payment(principal=10_000.0, apr=0.08, term_months=60)
+    assert abs(pmt - 202.76) < 0.5
+    # Total paid exceeds principal (interest), and the formula is reversible.
+    assert pmt * 60 > 10_000.0
+
+
+def test_calc_loan_payment_zero_apr_is_straight_line() -> None:
+    assert abs(calc_loan_payment(12_000.0, 0.0, 24) - 500.0) < 0.001
+
+
+def test_calc_loan_payment_no_financing() -> None:
+    # No term or no principal → no payment.
+    assert calc_loan_payment(10_000.0, 0.08, 0) == 0.0
+    assert calc_loan_payment(0.0, 0.08, 60) == 0.0
+
+
+def test_financing_adds_monthly_cost_and_drops_upfront_machine() -> None:
+    base = {"daily_transactions": 25, "avg_ticket_usd": 4.0, "cogs_pct": 0.40}
+    cash = build_12month_table(**base)
+    pmt = calc_loan_payment(8000.0, 0.10, 48)
+    financed = build_12month_table(**base, monthly_loan_payment=pmt)
+    # The loan payment is a fixed monthly cost: net drops by exactly the payment.
+    assert abs((cash[0]["net"] - financed[0]["net"]) - pmt) < 0.01
+
+    # Financed → machine cost leaves the upfront investment base.
+    cash_sum = calc_summary(cash, machine_cost=8000.0, installation_cost=500.0)
+    fin_sum = calc_summary(financed, machine_cost=8000.0, installation_cost=500.0, financed=True)
+    assert cash_sum["total_investment"] == 8500.0
+    assert fin_sum["total_investment"] == 500.0
 
 
 def test_calc_unit_economics_breakeven() -> None:
@@ -286,6 +320,44 @@ def test_financial_calculate_with_processing(client: TestClient) -> None:
     # Daily/weekly sales & returns card renders in the projection.
     assert "Daily Sales" in resp.text
     assert "Weekly Returns" in resp.text
+
+
+def test_financial_calculate_with_financing(client: TestClient) -> None:
+    resp = client.get(
+        "/financial/calculate",
+        params={
+            "machine_cost": 8000,
+            "daily_transactions": 25,
+            "avg_ticket_usd": 4.0,
+            "cogs_pct": 40,
+            "finance_apr_pct": 9,
+            "finance_term_months": 48,
+        },
+    )
+    assert resp.status_code == 200
+    assert "Machine loan / month" in resp.text
+
+
+def test_financial_save_with_financing(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Financed Cooler",
+            "machine_cost": "8000",
+            "daily_transactions": "25",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+            "finance_apr_pct": "9.5",
+            "finance_term_months": "48",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Financed Cooler").first()
+    assert s is not None
+    # APR stored as a fraction; term stored verbatim.
+    assert abs(s.finance_apr_pct - 0.095) < 0.0001
+    assert s.finance_term_months == 48
 
 
 def test_calculator_lists_equipment_options(client: TestClient, db: Session) -> None:

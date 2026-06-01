@@ -85,6 +85,43 @@
         </div>
       </div>
 
+      <!-- Machine Financing -->
+      <div class="card mb-3">
+        <div class="card-header py-2 fw-semibold small">
+          <i class="bi bi-bank me-1"></i>Machine Financing
+          <span class="badge bg-secondary ms-2 fw-normal" style="font-size:.7rem">Optional</span>
+        </div>
+        <div class="card-body pb-2">
+          <p class="text-muted small mb-2">
+            Leave the term at <strong>0</strong> to model paying cash. When a term is set,
+            the machine cost is financed: an amortized monthly loan payment is added to
+            operating costs and the machine drops out of the upfront investment.
+          </p>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label small d-flex align-items-center gap-1">
+                Finance APR % (0–100)
+                <i class="bi bi-info-circle text-muted"
+                   data-bs-toggle="tooltip" data-bs-placement="top"
+                   title="Annual percentage rate on the equipment loan. Equipment financing commonly runs 6–18% depending on credit and lender."></i>
+              </label>
+              <input type="number" name="finance_apr_pct" class="form-control form-control-sm" min="0" max="100" step="0.1"
+                     value="{{ (scenario.finance_apr_pct * 100) | round(2) if scenario else 0 }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small d-flex align-items-center gap-1">
+                Loan Term (months)
+                <i class="bi bi-info-circle text-muted"
+                   data-bs-toggle="tooltip" data-bs-placement="top"
+                   title="Length of the equipment loan in months (e.g. 36, 48, 60). Set to 0 to pay cash and skip financing."></i>
+              </label>
+              <input type="number" name="finance_term_months" class="form-control form-control-sm" min="0" step="1"
+                     value="{{ scenario.finance_term_months | int if scenario else 0 }}">
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Revenue Inputs -->
       <div class="card mb-3">
         <div class="card-header py-2 fw-semibold small">Revenue Inputs</div>

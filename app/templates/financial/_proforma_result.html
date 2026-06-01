@@ -103,6 +103,19 @@
               <td class="text-muted">All-in cost / month</td>
               <td class="text-end">${{ "%.0f" | format(monthly_cost) }}</td>
             </tr>
+            {% if finance and finance.financed %}
+            <tr>
+              <td class="text-muted d-flex align-items-center gap-1">
+                Machine loan / month
+                <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip"
+                   title="Amortized payment on the financed machine: ${{ '%.0f' | format(finance.principal) }} at {{ '%.1f' | format(finance.apr_pct) }}% APR over {{ finance.term_months | int }} months. Total interest ≈ ${{ '%.0f' | format(finance.total_interest) }}."></i>
+              </td>
+              <td class="text-end">
+                ${{ "%.0f" | format(finance.monthly_payment) }}
+                <span class="text-muted">@ {{ "%.1f" | format(finance.apr_pct) }}% / {{ finance.term_months | int }}mo</span>
+              </td>
+            </tr>
+            {% endif %}
             <tr>
               <td class="text-muted">Net / month</td>
               <td class="text-end fw-semibold {% if summary.avg_monthly_net >= 0 %}text-success{% else %}text-danger{% endif %}">

@@ -10,6 +10,7 @@ from app.models.equipment import EquipmentUnit
 from app.models.financial import MachineProForma
 from app.services.financial_calc import (
     build_12month_table,
+    calc_loan_payment,
     calc_summary,
     calc_unit_economics,
     cashflow_points,
@@ -72,8 +73,12 @@ def _build_projection(
     machine_cost: float,
     installation_cost: float,
     initial_inventory_cost: float,
+    finance_apr: float = 0.0,
+    finance_term_months: float = 0.0,
 ) -> dict[str, Any]:
     """Build the full result context (table + every summary view) from fractional rates."""
+    monthly_loan_payment = calc_loan_payment(machine_cost, finance_apr, finance_term_months)
+    financed = monthly_loan_payment > 0
     table = build_12month_table(
         daily_transactions=daily_transactions,
         avg_ticket_usd=avg_ticket_usd,
@@ -87,6 +92,7 @@ def _build_projection(
         software_monthly=software_monthly,
         processing_fee_pct=processing_fee_pct,
         processing_fee_per_txn=processing_fee_per_txn,
+        monthly_loan_payment=monthly_loan_payment,
         seasonality_json=seasonality_json,
     )
     summary = calc_summary(
@@ -94,10 +100,12 @@ def _build_projection(
         machine_cost=machine_cost,
         installation_cost=installation_cost,
         initial_inventory_cost=initial_inventory_cost,
+        financed=financed,
     )
     fixed_monthly_opex = (
         restock_labor_monthly + supplies_monthly + insurance_monthly
         + other_opex_monthly + connectivity_monthly + software_monthly
+        + monthly_loan_payment
     )
     unit_econ = calc_unit_economics(
         avg_ticket_usd=avg_ticket_usd,
@@ -107,10 +115,20 @@ def _build_projection(
         processing_fee_per_txn=processing_fee_per_txn,
         fixed_monthly_opex=fixed_monthly_opex,
     )
+    finance = {
+        "financed": financed,
+        "monthly_payment": monthly_loan_payment,
+        "apr_pct": finance_apr * 100,
+        "term_months": finance_term_months,
+        "principal": machine_cost,
+        "total_paid": monthly_loan_payment * finance_term_months,
+        "total_interest": max(monthly_loan_payment * finance_term_months - machine_cost, 0.0),
+    }
     return {
         "table": table,
         "summary": summary,
         "unit_econ": unit_econ,
+        "finance": finance,
         "breakdown": cost_breakdown(table),
         "cashflow": cashflow_points(table, summary["total_investment"]),
     }
@@ -135,6 +153,8 @@ def _projection_for_scenario(s: MachineProForma) -> dict[str, Any]:
         machine_cost=s.machine_cost,
         installation_cost=s.installation_cost,
         initial_inventory_cost=s.initial_inventory_cost,
+        finance_apr=s.finance_apr_pct,
+        finance_term_months=s.finance_term_months,
     )
 
 
@@ -192,6 +212,8 @@ def financial_calculate(
     software_monthly: float = 0,
     processing_fee_pct: float = 0,
     processing_fee_per_txn: float = 0,
+    finance_apr_pct: float = 0,
+    finance_term_months: float = 0,
 ) -> HTMLResponse:
     season = [float(request.query_params.get(f"season_{i}", 1.0)) for i in range(12)]
     seasonality_json = json.dumps(season) if any(s != 1.0 for s in season) else None
@@ -213,6 +235,8 @@ def financial_calculate(
         machine_cost=machine_cost,
         installation_cost=installation_cost,
         initial_inventory_cost=initial_inventory_cost,
+        finance_apr=_pct_to_fraction(finance_apr_pct),
+        finance_term_months=finance_term_months,
     )
     return templates.TemplateResponse(request, "financial/_proforma_result.html", ctx)
 
@@ -236,6 +260,8 @@ def financial_save(
     software_monthly: float = Form(0),
     processing_fee_pct: float = Form(0),
     processing_fee_per_txn: float = Form(0),
+    finance_apr_pct: float = Form(0),
+    finance_term_months: float = Form(0),
     equipment_unit_id: int | None = Form(None),
     seasonality_json: str = Form(""),
     notes: str = Form(""),
@@ -264,6 +290,8 @@ def financial_save(
         software_monthly=software_monthly,
         processing_fee_pct=_pct_to_fraction(processing_fee_pct),
         processing_fee_per_txn=processing_fee_per_txn,
+        finance_apr_pct=_pct_to_fraction(finance_apr_pct),
+        finance_term_months=finance_term_months,
         equipment_unit_id=equipment_unit_id or None,
         seasonality_json=stored_season,
         notes=notes or None,
@@ -324,6 +352,8 @@ def financial_copy(scenario_id: int, db: Session = Depends(get_db)) -> HTMLRespo
         software_monthly=original.software_monthly,
         processing_fee_pct=original.processing_fee_pct,
         processing_fee_per_txn=original.processing_fee_per_txn,
+        finance_apr_pct=original.finance_apr_pct,
+        finance_term_months=original.finance_term_months,
         equipment_unit_id=original.equipment_unit_id,
         seasonality_json=original.seasonality_json,
         notes=original.notes,
