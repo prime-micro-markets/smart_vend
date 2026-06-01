@@ -125,6 +125,33 @@ def test_financing_adds_monthly_cost_and_drops_upfront_machine() -> None:
     assert fin_sum["total_investment"] == 500.0
 
 
+def test_recurring_restock_is_fixed_monthly_cost() -> None:
+    base = {"daily_transactions": 25, "avg_ticket_usd": 4.0, "cogs_pct": 0.40}
+    plain = build_12month_table(**base)
+    with_restock = build_12month_table(**base, recurring_restock_monthly=150.0)
+    # A flat recurring restock budget drops each month's net by exactly that amount.
+    assert abs((plain[0]["net"] - with_restock[0]["net"]) - 150.0) < 0.01
+
+
+def test_financial_save_with_recurring_restock(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Recurring Restock",
+            "machine_cost": "8000",
+            "daily_transactions": "25",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+            "recurring_restock_monthly": "150",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Recurring Restock").first()
+    assert s is not None
+    assert s.recurring_restock_monthly == 150.0
+
+
 def test_calc_unit_economics_breakeven() -> None:
     econ = calc_unit_economics(
         avg_ticket_usd=4.0,

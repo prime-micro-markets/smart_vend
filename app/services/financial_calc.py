@@ -41,6 +41,7 @@ def build_12month_table(
     other_opex_monthly: float = 0.0,
     connectivity_monthly: float = 0.0,
     software_monthly: float = 0.0,
+    recurring_restock_monthly: float = 0.0,
     processing_fee_pct: float = 0.0,
     processing_fee_per_txn: float = 0.0,
     monthly_loan_payment: float = 0.0,
@@ -51,11 +52,12 @@ def build_12month_table(
     base_monthly_txns = daily_transactions * DAYS_PER_MONTH
     base_monthly_revenue = base_monthly_txns * avg_ticket_usd
     # Fixed costs don't scale with volume; commission and processing do (handled per-month).
-    # A machine loan payment, when financed, is just another fixed monthly cost.
+    # A machine loan payment, when financed, is just another fixed monthly cost; so is a flat
+    # recurring restock/inventory budget.
     fixed_opex = (
         restock_labor_monthly + supplies_monthly + insurance_monthly
         + other_opex_monthly + connectivity_monthly + software_monthly
-        + monthly_loan_payment
+        + recurring_restock_monthly + monthly_loan_payment
     )
 
     rows = []

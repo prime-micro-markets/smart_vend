@@ -72,6 +72,7 @@ def _build_projection(
     other_opex_monthly: float,
     connectivity_monthly: float,
     software_monthly: float,
+    recurring_restock_monthly: float,
     processing_fee_pct: float,
     processing_fee_per_txn: float,
     seasonality_json: str | None,
@@ -99,6 +100,7 @@ def _build_projection(
         other_opex_monthly=other_opex_monthly,
         connectivity_monthly=connectivity_monthly,
         software_monthly=software_monthly,
+        recurring_restock_monthly=recurring_restock_monthly,
         processing_fee_pct=processing_fee_pct,
         processing_fee_per_txn=processing_fee_per_txn,
         monthly_loan_payment=monthly_loan_payment,
@@ -114,7 +116,7 @@ def _build_projection(
     fixed_monthly_opex = (
         restock_labor_monthly + supplies_monthly + insurance_monthly
         + other_opex_monthly + connectivity_monthly + software_monthly
-        + monthly_loan_payment
+        + recurring_restock_monthly + monthly_loan_payment
     )
     unit_econ = calc_unit_economics(
         avg_ticket_usd=avg_ticket_usd,
@@ -157,6 +159,7 @@ def _projection_for_scenario(s: MachineProForma) -> dict[str, Any]:
         other_opex_monthly=s.other_opex_monthly,
         connectivity_monthly=s.connectivity_monthly,
         software_monthly=s.software_monthly,
+        recurring_restock_monthly=s.recurring_restock_monthly,
         processing_fee_pct=s.processing_fee_pct,
         processing_fee_per_txn=s.processing_fee_per_txn,
         seasonality_json=s.seasonality_json,
@@ -222,6 +225,7 @@ def financial_calculate(
     other_opex_monthly: float = 0,
     connectivity_monthly: float = 0,
     software_monthly: float = 0,
+    recurring_restock_monthly: float = 0,
     processing_fee_pct: float = 0,
     processing_fee_per_txn: float = 0,
     finance_apr_pct: float = 0,
@@ -242,6 +246,7 @@ def financial_calculate(
         other_opex_monthly=other_opex_monthly,
         connectivity_monthly=connectivity_monthly,
         software_monthly=software_monthly,
+        recurring_restock_monthly=recurring_restock_monthly,
         processing_fee_pct=_pct_to_fraction(processing_fee_pct),
         processing_fee_per_txn=processing_fee_per_txn,
         seasonality_json=seasonality_json,
@@ -273,6 +278,7 @@ def financial_save(
     other_opex_monthly: float = Form(0),
     connectivity_monthly: float = Form(0),
     software_monthly: float = Form(0),
+    recurring_restock_monthly: float = Form(0),
     processing_fee_pct: float = Form(0),
     processing_fee_per_txn: float = Form(0),
     finance_apr_pct: float = Form(0),
@@ -305,6 +311,7 @@ def financial_save(
         other_opex_monthly=other_opex_monthly,
         connectivity_monthly=connectivity_monthly,
         software_monthly=software_monthly,
+        recurring_restock_monthly=recurring_restock_monthly,
         processing_fee_pct=_pct_to_fraction(processing_fee_pct),
         processing_fee_per_txn=processing_fee_per_txn,
         finance_apr_pct=_pct_to_fraction(finance_apr_pct),
@@ -369,6 +376,7 @@ def financial_copy(scenario_id: int, db: Session = Depends(get_db)) -> HTMLRespo
         other_opex_monthly=original.other_opex_monthly,
         connectivity_monthly=original.connectivity_monthly,
         software_monthly=original.software_monthly,
+        recurring_restock_monthly=original.recurring_restock_monthly,
         processing_fee_pct=original.processing_fee_pct,
         processing_fee_per_txn=original.processing_fee_per_txn,
         finance_apr_pct=original.finance_apr_pct,

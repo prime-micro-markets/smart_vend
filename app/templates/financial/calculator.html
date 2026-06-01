@@ -195,6 +195,16 @@
               <input type="number" name="restock_labor_monthly" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.restock_labor_monthly if scenario else 200 }}">
             </div>
+            <div class="col-md-6">
+              <label class="form-label small d-flex align-items-center gap-1">
+                Recurring Restock ($)
+                <i class="bi bi-info-circle text-muted"
+                   data-bs-toggle="tooltip" data-bs-placement="top"
+                   title="Flat ongoing monthly cost to replenish product inventory — the recurring counterpart to the one-time Initial Inventory. Use this if you'd rather budget restocking as a fixed monthly amount than (or alongside) the COGS % above."></i>
+              </label>
+              <input type="number" name="recurring_restock_monthly" class="form-control form-control-sm" min="0" step="any"
+                     value="{{ scenario.recurring_restock_monthly if scenario else 0 }}">
+            </div>
             <div class="col-md-4">
               <label class="form-label small">Supplies ($)</label>
               <input type="number" name="supplies_monthly" class="form-control form-control-sm" min="0" step="any"

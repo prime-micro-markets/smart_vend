@@ -35,6 +35,9 @@ class MachineProForma(Base):
     # Monthly operating costs
     commission_pct: Mapped[float] = mapped_column(Float, default=0.0)
     restock_labor_monthly: Mapped[float] = mapped_column(Float, default=0.0)
+    # Flat recurring monthly product-replenishment budget (the ongoing counterpart to the
+    # one-time initial_inventory_cost). Folded into fixed monthly opex.
+    recurring_restock_monthly: Mapped[float] = mapped_column(Float, default=0.0)
     supplies_monthly: Mapped[float] = mapped_column(Float, default=0.0)
     insurance_monthly: Mapped[float] = mapped_column(Float, default=0.0)
     connectivity_monthly: Mapped[float] = mapped_column(Float, default=0.0)
