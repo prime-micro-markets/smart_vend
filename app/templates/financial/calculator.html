@@ -67,18 +67,18 @@
             </div>
             <div class="col-md-4">
               <label class="form-label small">Machine Cost ($) <span class="text-danger" title="Required">*</span></label>
-              <input type="number" name="machine_cost" id="machine_cost" class="form-control form-control-sm" min="0" step="100"
+              <input type="number" name="machine_cost" id="machine_cost" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.machine_cost if scenario else 8000 }}" required>
               <div class="invalid-feedback small">Enter the machine cost.</div>
             </div>
             <div class="col-md-4">
               <label class="form-label small">Additional Installation Costs ($)</label>
-              <input type="number" name="installation_cost" class="form-control form-control-sm" min="0" step="50"
+              <input type="number" name="installation_cost" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.installation_cost if scenario else 0 }}">
             </div>
             <div class="col-md-4">
               <label class="form-label small">Initial Inventory ($)</label>
-              <input type="number" name="initial_inventory_cost" class="form-control form-control-sm" min="0" step="50"
+              <input type="number" name="initial_inventory_cost" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.initial_inventory_cost if scenario else 500 }}">
             </div>
           </div>
@@ -105,7 +105,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Annual percentage rate on the equipment loan. Equipment financing commonly runs 6–18% depending on credit and lender."></i>
               </label>
-              <input type="number" name="finance_apr_pct" class="form-control form-control-sm" min="0" max="100" step="0.1"
+              <input type="number" name="finance_apr_pct" class="form-control form-control-sm" min="0" max="100" step="any"
                      value="{{ (scenario.finance_apr_pct * 100) | round(2) if scenario else 0 }}">
             </div>
             <div class="col-md-6">
@@ -115,7 +115,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Length of the equipment loan in months (e.g. 36, 48, 60). Set to 0 to pay cash and skip financing."></i>
               </label>
-              <input type="number" name="finance_term_months" class="form-control form-control-sm" min="0" step="1"
+              <input type="number" name="finance_term_months" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.finance_term_months | int if scenario else 0 }}">
             </div>
           </div>
@@ -134,7 +134,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Estimated number of sales per day across all products in this machine."></i>
               </label>
-              <input type="number" name="daily_transactions" class="form-control form-control-sm" min="0" step="1"
+              <input type="number" name="daily_transactions" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.daily_transactions if scenario else 20 }}" required>
               <div class="invalid-feedback small">Enter expected daily transactions.</div>
             </div>
@@ -145,7 +145,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Average dollar amount per sale. Multiply by daily transactions to get gross daily revenue."></i>
               </label>
-              <input type="number" name="avg_ticket_usd" class="form-control form-control-sm" min="0" step="0.25"
+              <input type="number" name="avg_ticket_usd" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.avg_ticket_usd if scenario else 3.50 }}" required>
               <div class="invalid-feedback small">Enter the average ticket size.</div>
             </div>
@@ -156,7 +156,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Cost of Goods Sold — the percentage of revenue spent on wholesale product cost. Vending machines typically run 30–55% depending on product mix and retail pricing."></i>
               </label>
-              <input type="number" name="cogs_pct" class="form-control form-control-sm" min="0" max="100" step="1"
+              <input type="number" name="cogs_pct" class="form-control form-control-sm" min="0" max="100" step="any"
                      value="{{ (scenario.cogs_pct * 100) | int if scenario else 42 }}" required>
               <div class="invalid-feedback small">Enter the COGS percentage.</div>
             </div>
@@ -176,7 +176,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Percentage of gross revenue paid to the property owner or host for machine placement rights. Typically 5–20%."></i>
               </label>
-              <input type="number" name="commission_pct" class="form-control form-control-sm" min="0" max="100" step="1"
+              <input type="number" name="commission_pct" class="form-control form-control-sm" min="0" max="100" step="any"
                      value="{{ (scenario.commission_pct * 100) | int if scenario else 0 }}">
             </div>
             <div class="col-md-6">
@@ -186,22 +186,22 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Monthly labor cost for restocking — your hourly rate multiplied by hours spent driving and filling the machine each month."></i>
               </label>
-              <input type="number" name="restock_labor_monthly" class="form-control form-control-sm" min="0" step="10"
+              <input type="number" name="restock_labor_monthly" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.restock_labor_monthly if scenario else 200 }}">
             </div>
             <div class="col-md-4">
               <label class="form-label small">Supplies ($)</label>
-              <input type="number" name="supplies_monthly" class="form-control form-control-sm" min="0" step="5"
+              <input type="number" name="supplies_monthly" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.supplies_monthly if scenario else 50 }}">
             </div>
             <div class="col-md-4">
               <label class="form-label small">Insurance ($)</label>
-              <input type="number" name="insurance_monthly" class="form-control form-control-sm" min="0" step="5"
+              <input type="number" name="insurance_monthly" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.insurance_monthly if scenario else 75 }}">
             </div>
             <div class="col-md-4">
               <label class="form-label small">Other Expenses ($)</label>
-              <input type="number" name="other_opex_monthly" class="form-control form-control-sm" min="0" step="10"
+              <input type="number" name="other_opex_monthly" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.other_opex_monthly if scenario else 0 }}">
             </div>
             <div class="col-md-6">
@@ -211,7 +211,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Monthly cost for cellular data or WiFi used by the smart cooler for telemetry, remote monitoring, and cashless payment processing. Typically $10–$40/mo."></i>
               </label>
-              <input type="number" name="connectivity_monthly" class="form-control form-control-sm" min="0" step="5"
+              <input type="number" name="connectivity_monthly" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.connectivity_monthly if scenario else 0 }}">
             </div>
             <div class="col-md-6">
@@ -221,8 +221,19 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Flat monthly subscription for the vending-management / micro-market platform (e.g. Cantaloupe, 365). Per-transaction processing is entered separately below. Typically $20–$80/mo."></i>
               </label>
-              <input type="number" name="software_monthly" id="software_monthly" class="form-control form-control-sm" min="0" step="5"
+              <input type="number" name="software_monthly" id="software_monthly" class="form-control form-control-sm" min="0" step="any"
                      value="{{ scenario.software_monthly if scenario else 0 }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small d-flex align-items-center gap-1">
+                Machine Finance ($)
+                <span class="badge bg-secondary fw-normal" style="font-size:.65rem">Optional</span>
+                <i class="bi bi-info-circle text-muted"
+                   data-bs-toggle="tooltip" data-bs-placement="top"
+                   title="Monthly machine loan or lease payment. Enter a known payment directly here, or leave it at 0 to auto-calculate from the APR and term in the Machine Financing card above. When set, the machine is treated as financed (excluded from upfront investment) and this counts as a monthly operating cost."></i>
+              </label>
+              <input type="number" name="finance_payment_monthly" class="form-control form-control-sm" min="0" step="any"
+                     value="{{ scenario.finance_payment_monthly | round(2) if scenario else 0 }}">
             </div>
           </div>
         </div>
@@ -247,7 +258,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Revenue share taken per transaction by the payment processor / platform. Cantaloupe and 365 run around 5–6%. Prefilled from the selected unit's processing fee."></i>
               </label>
-              <input type="number" name="processing_fee_pct" id="processing_fee_pct" class="form-control form-control-sm" min="0" max="100" step="0.05"
+              <input type="number" name="processing_fee_pct" id="processing_fee_pct" class="form-control form-control-sm" min="0" max="100" step="any"
                      value="{{ (scenario.processing_fee_pct * 100) | round(2) if scenario else 0 }}">
             </div>
             <div class="col-md-6">
@@ -257,7 +268,7 @@
                    data-bs-toggle="tooltip" data-bs-placement="top"
                    title="Fixed dollar amount charged on every transaction regardless of ticket size (e.g. $0.05–$0.15). This is what erodes margin on low-priced items."></i>
               </label>
-              <input type="number" name="processing_fee_per_txn" class="form-control form-control-sm" min="0" step="0.01"
+              <input type="number" name="processing_fee_per_txn" class="form-control form-control-sm" min="0" step="any"
                      value="{{ '%.2f' | format(scenario.processing_fee_per_txn) if scenario else 0 }}">
             </div>
           </div>
@@ -286,7 +297,7 @@
               <label class="form-label text-muted mb-0" style="font-size:.65rem">{{ month_labels[i] }}</label>
               <input type="number" name="season_{{ i }}"
                      class="form-control form-control-sm season-input text-center px-1"
-                     min="0.1" max="3" step="0.05"
+                     min="0.1" max="3" step="any"
                      value="{{ '%.2f' | format(season_vals[i]) }}">
             </div>
             {% endfor %}

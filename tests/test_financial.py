@@ -322,6 +322,44 @@ def test_financial_calculate_with_processing(client: TestClient) -> None:
     assert "Weekly Returns" in resp.text
 
 
+def test_financial_save_with_manual_finance_payment(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Leased Cooler",
+            "machine_cost": "8000",
+            "daily_transactions": "25",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+            "finance_payment_monthly": "175",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Leased Cooler").first()
+    assert s is not None
+    assert s.finance_payment_monthly == 175.0
+
+
+def test_manual_finance_payment_overrides_amortization(client: TestClient) -> None:
+    # With both a manual payment and APR/term, the entered payment is what's used.
+    resp = client.get(
+        "/financial/calculate",
+        params={
+            "machine_cost": 8000,
+            "daily_transactions": 25,
+            "avg_ticket_usd": 4.0,
+            "cogs_pct": 40,
+            "finance_apr_pct": 9,
+            "finance_term_months": 48,
+            "finance_payment_monthly": 250,
+        },
+    )
+    assert resp.status_code == 200
+    assert "Machine finance / month" in resp.text
+    assert "$250" in resp.text
+
+
 def test_financial_calculate_with_financing(client: TestClient) -> None:
     resp = client.get(
         "/financial/calculate",
@@ -335,7 +373,7 @@ def test_financial_calculate_with_financing(client: TestClient) -> None:
         },
     )
     assert resp.status_code == 200
-    assert "Machine loan / month" in resp.text
+    assert "Machine finance / month" in resp.text
 
 
 def test_financial_save_with_financing(client: TestClient, db: Session) -> None:

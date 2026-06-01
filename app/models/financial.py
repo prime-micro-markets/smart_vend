@@ -37,6 +37,10 @@ class MachineProForma(Base):
     connectivity_monthly: Mapped[float] = mapped_column(Float, default=0.0)
     software_monthly: Mapped[float] = mapped_column(Float, default=0.0)  # flat platform / SaaS fee
     other_opex_monthly: Mapped[float] = mapped_column(Float, default=0.0)
+    # Optional flat monthly machine loan/lease payment entered directly. When > 0 it overrides
+    # the APR/term amortization below as the financing cost; either way it counts as a monthly
+    # operating cost and marks the machine as financed (excluded from upfront investment).
+    finance_payment_monthly: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Per-transaction SaaS / payment-processing cost. Cantaloupe/365 et al. bill a revenue
     # share PLUS a flat fee per swipe, so both are modeled: processing_fee_pct is a fraction
