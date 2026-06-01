@@ -26,6 +26,11 @@ def _pct_to_fraction(value: float) -> float:
     return value / 100 if value > 1 else value
 
 
+def _to_daily_transactions(count: float, basis: str) -> float:
+    """The engine works in daily transactions; weekly input is divided across 7 days."""
+    return count / 7.0 if basis == "weekly" else count
+
+
 def _equipment_options(db: Session) -> list[dict[str, Any]]:
     """Active catalog units with the costs the calculator can prefill from.
 
@@ -207,6 +212,7 @@ def financial_calculate(
     installation_cost: float = 0,
     initial_inventory_cost: float = 0,
     daily_transactions: float = 0,
+    transaction_basis: str = "daily",
     avg_ticket_usd: float = 0,
     cogs_pct: float = 0,
     commission_pct: float = 0,
@@ -226,7 +232,7 @@ def financial_calculate(
     seasonality_json = json.dumps(season) if any(s != 1.0 for s in season) else None
 
     ctx = _build_projection(
-        daily_transactions=daily_transactions,
+        daily_transactions=_to_daily_transactions(daily_transactions, transaction_basis),
         avg_ticket_usd=avg_ticket_usd,
         cogs_pct=_pct_to_fraction(cogs_pct),
         commission_pct=_pct_to_fraction(commission_pct),
@@ -257,6 +263,7 @@ def financial_save(
     installation_cost: float = Form(0),
     initial_inventory_cost: float = Form(0),
     daily_transactions: float = Form(...),
+    transaction_basis: str = Form("daily"),
     avg_ticket_usd: float = Form(...),
     cogs_pct: float = Form(...),
     commission_pct: float = Form(0),
@@ -287,7 +294,8 @@ def financial_save(
         machine_cost=machine_cost,
         installation_cost=installation_cost,
         initial_inventory_cost=initial_inventory_cost,
-        daily_transactions=daily_transactions,
+        daily_transactions=_to_daily_transactions(daily_transactions, transaction_basis),
+        transaction_basis=transaction_basis,
         avg_ticket_usd=avg_ticket_usd,
         cogs_pct=_pct_to_fraction(cogs_pct),
         commission_pct=_pct_to_fraction(commission_pct),
@@ -351,6 +359,7 @@ def financial_copy(scenario_id: int, db: Session = Depends(get_db)) -> HTMLRespo
         installation_cost=original.installation_cost,
         initial_inventory_cost=original.initial_inventory_cost,
         daily_transactions=original.daily_transactions,
+        transaction_basis=original.transaction_basis,
         avg_ticket_usd=original.avg_ticket_usd,
         cogs_pct=original.cogs_pct,
         commission_pct=original.commission_pct,

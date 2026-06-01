@@ -360,6 +360,42 @@ def test_manual_finance_payment_overrides_amortization(client: TestClient) -> No
     assert "$250" in resp.text
 
 
+def test_save_weekly_transactions_stored_as_daily(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Weekly Entry",
+            "machine_cost": "8000",
+            "daily_transactions": "140",  # entered as weekly
+            "transaction_basis": "weekly",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Weekly Entry").first()
+    assert s is not None
+    assert s.transaction_basis == "weekly"
+    # 140/week → 20/day canonical.
+    assert abs(s.daily_transactions - 20.0) < 0.001
+
+
+def test_calculate_weekly_matches_equivalent_daily(client: TestClient) -> None:
+    common = {"machine_cost": 8000, "avg_ticket_usd": 4.0, "cogs_pct": 40}
+    daily = client.get(
+        "/financial/calculate",
+        params={**common, "daily_transactions": 20, "transaction_basis": "daily"},
+    )
+    weekly = client.get(
+        "/financial/calculate",
+        params={**common, "daily_transactions": 140, "transaction_basis": "weekly"},
+    )
+    assert daily.status_code == weekly.status_code == 200
+    # 140/week and 20/day project identically (same revenue figure in the markup).
+    assert daily.text == weekly.text
+
+
 def test_financial_calculate_with_financing(client: TestClient) -> None:
     resp = client.get(
         "/financial/calculate",

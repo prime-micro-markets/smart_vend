@@ -129,14 +129,20 @@
           <div class="row g-2">
             <div class="col-md-4">
               <label class="form-label small d-flex align-items-center gap-1">
-                Daily Transactions <span class="text-danger" title="Required">*</span>
+                Transactions <span class="text-danger" title="Required">*</span>
                 <i class="bi bi-info-circle text-muted"
                    data-bs-toggle="tooltip" data-bs-placement="top"
-                   title="Estimated number of sales per day across all products in this machine."></i>
+                   title="Estimated number of sales across all products. Choose per day or per week — weekly is spread evenly across 7 days for the projection."></i>
               </label>
-              <input type="number" name="daily_transactions" class="form-control form-control-sm" min="0" step="any"
-                     value="{{ scenario.daily_transactions if scenario else 20 }}" required>
-              <div class="invalid-feedback small">Enter expected daily transactions.</div>
+              <div class="input-group input-group-sm has-validation">
+                <input type="number" name="daily_transactions" class="form-control form-control-sm" min="0" step="any"
+                       value="{% if scenario %}{% if scenario.transaction_basis == 'weekly' %}{{ (scenario.daily_transactions * 7) | round(2) }}{% else %}{{ scenario.daily_transactions | round(2) }}{% endif %}{% else %}20{% endif %}" required>
+                <select name="transaction_basis" class="form-select form-select-sm" style="max-width:7.5rem">
+                  <option value="daily" {% if not scenario or scenario.transaction_basis != 'weekly' %}selected{% endif %}>per day</option>
+                  <option value="weekly" {% if scenario and scenario.transaction_basis == 'weekly' %}selected{% endif %}>per week</option>
+                </select>
+                <div class="invalid-feedback small">Enter expected transactions.</div>
+              </div>
             </div>
             <div class="col-md-4">
               <label class="form-label small d-flex align-items-center gap-1">

@@ -26,6 +26,9 @@ class MachineProForma(Base):
 
     # Revenue inputs
     daily_transactions: Mapped[float] = mapped_column(Float, nullable=False)
+    # How the transaction count was entered ("daily" or "weekly"). daily_transactions always
+    # stores the canonical per-day figure; this just drives the input unit on the edit form.
+    transaction_basis: Mapped[str] = mapped_column(String(10), default="daily")
     avg_ticket_usd: Mapped[float] = mapped_column(Float, nullable=False)
     cogs_pct: Mapped[float] = mapped_column(Float, nullable=False)
 
