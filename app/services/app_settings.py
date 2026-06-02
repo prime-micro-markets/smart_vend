@@ -23,12 +23,12 @@ DEFAULTS: dict[str, str] = {
     "inventory_max_tool_calls": "10",
     "equipment_batch_size": "4",
     # Chatbot scheduling / calendar window (consumed by app/services/google_calendar.py).
-    "cal_open_hour": "9",
-    "cal_close_hour": "17",
+    # cal_day_hours is a JSON object mapping weekday (0=Mon … 6=Sun) -> [open_hour, close_hour]
+    # on a 24-hour clock; a day absent from the map is closed (no times offered).
+    "cal_day_hours": '{"0": [9, 17], "1": [9, 17], "2": [9, 17], "3": [9, 17], "4": [9, 17]}',
     "cal_slot_minutes": "30",
     "cal_lookahead_days": "7",
     "cal_max_slots": "8",
-    "cal_business_days": "0,1,2,3,4",  # Mon-Fri (Monday = 0 … Sunday = 6)
     "cal_timezone": "America/Chicago",
 }
 

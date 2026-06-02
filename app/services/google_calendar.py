@@ -13,6 +13,7 @@ customer to confirm.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -30,10 +31,11 @@ _UTC = ZoneInfo("UTC")
 _CALENDAR_ID = "primary"
 
 # Fallback business-hours / slotting config. The live values come from the
-# AppSetting table (Settings → Scheduling); these mirror app_settings.DEFAULTS
-# and are only used if a row is missing or unparseable.
+# AppSetting table (Customer Service → Availability); these mirror
+# app_settings.DEFAULTS and are only used if a row is missing or unparseable.
 _DEFAULT_TZ = "America/Chicago"  # Bay County FL is Central time
-_DEFAULT_BUSINESS_DAYS = {0, 1, 2, 3, 4}  # Mon-Fri (Monday = 0)
+# Per-day open/close on a 24-hour clock (Mon-Fri 9-5); a day absent = closed.
+_DEFAULT_DAY_HOURS: dict[int, tuple[int, int]] = dict.fromkeys(range(5), (9, 17))
 
 # A busy block from the calendar: (start, end), both tz-aware UTC.
 BusyInterval = tuple[datetime, datetime]
@@ -44,26 +46,36 @@ class SchedulingConfig:
     """The tunable calendar window, resolved from AppSetting at request time."""
 
     tz: ZoneInfo
-    business_days: set[int]
-    open_hour: int
-    close_hour: int
+    day_hours: dict[int, tuple[int, int]]  # weekday (0=Mon) -> (open_hour, close_hour)
     slot_minutes: int
     lookahead_days: int
     max_slots: int
 
 
-def parse_business_days(raw: str) -> set[int]:
-    """Parse a stored ``"0,1,2,3,4"`` string into a set of weekday ints (0=Mon).
+def parse_day_hours(raw: str) -> dict[int, tuple[int, int]]:
+    """Parse the stored ``{"0": [9, 17], …}`` JSON into {weekday: (open, close)}.
 
-    Ignores junk and out-of-range values; falls back to Mon-Fri if nothing valid
-    remains so the chatbot never ends up offering zero days by accident.
+    A day is only included if it has a valid window (0 ≤ open < close ≤ 23); junk,
+    out-of-range, or open≥close entries are dropped (that day is treated as closed).
+    If nothing valid remains, falls back to Mon-Fri 9-5 so the chatbot never ends
+    up silently offering zero times because of a malformed value.
     """
-    days: set[int] = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if part.isdigit() and 0 <= int(part) <= 6:
-            days.add(int(part))
-    return days or set(_DEFAULT_BUSINESS_DAYS)
+    try:
+        data = json.loads(raw) if raw else {}
+    except (ValueError, TypeError):
+        data = {}
+
+    result: dict[int, tuple[int, int]] = {}
+    if isinstance(data, dict):
+        for key, value in data.items():
+            try:
+                day = int(key)
+                open_h, close_h = int(value[0]), int(value[1])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            if 0 <= day <= 6 and 0 <= open_h < close_h <= 23:
+                result[day] = (open_h, close_h)
+    return result or dict(_DEFAULT_DAY_HOURS)
 
 
 def _resolve_tz(raw: str) -> ZoneInfo:
@@ -74,17 +86,10 @@ def _resolve_tz(raw: str) -> ZoneInfo:
 
 
 def load_scheduling_config(db: Session) -> SchedulingConfig:
-    """Resolve the calendar window from the Settings → Scheduling values."""
-    open_hour = app_settings.get_int(db, "cal_open_hour", minimum=0, maximum=23)
-    close_hour = app_settings.get_int(db, "cal_close_hour", minimum=1, maximum=23)
-    # A close hour at or below open would yield no slots; widen to a safe default.
-    if close_hour <= open_hour:
-        close_hour = max(open_hour + 1, 17)
+    """Resolve the calendar window from the Customer Service → Availability values."""
     return SchedulingConfig(
         tz=_resolve_tz(app_settings.get_str(db, "cal_timezone")),
-        business_days=parse_business_days(app_settings.get_str(db, "cal_business_days")),
-        open_hour=open_hour,
-        close_hour=close_hour,
+        day_hours=parse_day_hours(app_settings.get_str(db, "cal_day_hours")),
         slot_minutes=app_settings.get_int(db, "cal_slot_minutes", minimum=5, maximum=480),
         lookahead_days=app_settings.get_int(db, "cal_lookahead_days", minimum=1, maximum=60),
         max_slots=app_settings.get_int(db, "cal_max_slots", minimum=1, maximum=50),
@@ -140,9 +145,11 @@ def get_open_slots(db: Session, max_slots: int | None = None) -> list[datetime]:
     slots: list[datetime] = []
     day = now.date()
     for _ in range(cfg.lookahead_days + 1):
-        if day.weekday() in cfg.business_days:
-            slot_start = datetime(day.year, day.month, day.day, cfg.open_hour, 0, tzinfo=cfg.tz)
-            day_close = datetime(day.year, day.month, day.day, cfg.close_hour, 0, tzinfo=cfg.tz)
+        hours = cfg.day_hours.get(day.weekday())
+        if hours:
+            open_hour, close_hour = hours
+            slot_start = datetime(day.year, day.month, day.day, open_hour, 0, tzinfo=cfg.tz)
+            day_close = datetime(day.year, day.month, day.day, close_hour, 0, tzinfo=cfg.tz)
             while slot_start < day_close:
                 slot_end = slot_start + timedelta(minutes=cfg.slot_minutes)
                 if slot_start > now and not _overlaps(slot_start, slot_end, busy):
