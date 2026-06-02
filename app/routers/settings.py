@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import settings as env_settings
 from app.database import get_db
 from app.services import app_settings
+from app.services.google_calendar import parse_business_days
 from app.services.price_comparator import (
     VENDOR_KEYS,
     _setting_keys,
@@ -39,6 +40,37 @@ _AI_FIELDS: list[tuple[str, str, str, str]] = [
 ]
 
 _SEARCH_PROVIDERS = ["duckduckgo", "tavily"]
+
+# Chatbot scheduling window. (key, label, help, min, max) — clamped on save and read.
+_SCHEDULING_INT_FIELDS: list[tuple[str, str, str, int, int]] = [
+    ("cal_open_hour", "Open Hour", "Earliest slot start, 24-hour clock (0–23)", 0, 23),
+    ("cal_close_hour", "Close Hour", "Slots must end by this hour, 24-hour clock (1–23)", 1, 23),
+    ("cal_slot_minutes", "Slot Length (min)", "Length of each consultation slot", 5, 480),
+    ("cal_lookahead_days", "Days Ahead", "How many days out to offer times", 1, 60),
+    ("cal_max_slots", "Max Times Shown", "Cap on how many openings to list at once", 1, 50),
+]
+
+# (weekday int, label) — Monday = 0 to match Python's date.weekday().
+_WEEKDAYS: list[tuple[int, str]] = [
+    (0, "Mon"),
+    (1, "Tue"),
+    (2, "Wed"),
+    (3, "Thu"),
+    (4, "Fri"),
+    (5, "Sat"),
+    (6, "Sun"),
+]
+
+# (IANA name, friendly label) for the timezone picker.
+_TIMEZONES: list[tuple[str, str]] = [
+    ("America/New_York", "Eastern (New York)"),
+    ("America/Chicago", "Central (Chicago)"),
+    ("America/Denver", "Mountain (Denver)"),
+    ("America/Phoenix", "Arizona (no DST)"),
+    ("America/Los_Angeles", "Pacific (Los Angeles)"),
+    ("America/Anchorage", "Alaska (Anchorage)"),
+    ("Pacific/Honolulu", "Hawaii (Honolulu)"),
+]
 
 
 def _set_setting(db: Session, key: str, value: str) -> None:
@@ -64,6 +96,10 @@ def settings_index(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
         "Tavily": bool(env_settings.tavily_api_key),
         "Firecrawl": bool(env_settings.firecrawl_api_key),
     }
+    sched_values = {
+        key: app_settings.get_str(db, key) for key, _, _, _, _ in _SCHEDULING_INT_FIELDS
+    }
+    selected_days = parse_business_days(app_settings.get_str(db, "cal_business_days"))
     return templates.TemplateResponse(
         request,
         "settings/index.html",
@@ -74,6 +110,13 @@ def settings_index(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
             "ai_defaults": app_settings.DEFAULTS,
             "search_provider": app_settings.get_str(db, "search_provider") or "duckduckgo",
             "search_providers": _SEARCH_PROVIDERS,
+            "sched_fields": _SCHEDULING_INT_FIELDS,
+            "sched_values": sched_values,
+            "sched_defaults": app_settings.DEFAULTS,
+            "weekdays": _WEEKDAYS,
+            "selected_days": selected_days,
+            "timezones": _TIMEZONES,
+            "current_tz": app_settings.get_str(db, "cal_timezone"),
             "vendor_layout": _vendor_field_layout(),
             "vendor_values": load_vendor_settings(db),
             "api_status": api_status,
@@ -103,6 +146,26 @@ async def settings_save(request: Request, db: Session = Depends(get_db)) -> Redi
     provider = str(form.get("search_provider", "")).strip()
     if provider in _SEARCH_PROVIDERS:
         _set_setting(db, "search_provider", provider)
+
+    # Scheduling — integer window fields, clamped to their documented ranges.
+    for key, _, _, lo, hi in _SCHEDULING_INT_FIELDS:
+        raw = str(form.get(key, "")).strip()
+        if not raw:
+            continue
+        try:
+            _set_setting(db, key, str(max(lo, min(hi, int(raw)))))
+        except ValueError:
+            logger.warning("Ignored non-int scheduling value %r=%r", key, raw)
+
+    # Scheduling — business days come from a set of day checkboxes (cal_day_<n>).
+    # Store whatever is checked; an empty set falls back to Mon-Fri on read.
+    checked_days = [str(n) for n, _ in _WEEKDAYS if f"cal_day_{n}" in form]
+    _set_setting(db, "cal_business_days", ",".join(checked_days))
+
+    # Scheduling — timezone (only accept a value from our known list).
+    tz = str(form.get("cal_timezone", "")).strip()
+    if tz in {name for name, _ in _TIMEZONES}:
+        _set_setting(db, "cal_timezone", tz)
 
     # Vendor config — every setting_key across all vendors
     for keys in _vendor_field_layout().values():

@@ -69,6 +69,61 @@
       </div>
     </div>
 
+    <!-- Chatbot Scheduling -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header fw-semibold">
+          <i class="bi bi-calendar-week me-1"></i>Chatbot Scheduling — Consultation Times
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Controls the open consultation times the chatbot offers. Times are computed live
+            from your connected Google Calendar's free/busy, then filtered to this window.
+          </p>
+          <div class="row g-3">
+
+            <!-- Days offered -->
+            <div class="col-md-12">
+              <label class="form-label small fw-semibold mb-1">Days Offered</label>
+              <div class="d-flex flex-wrap gap-3">
+                {% for n, label in weekdays %}
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="cal_day_{{ n }}"
+                         name="cal_day_{{ n }}" {% if n in selected_days %}checked{% endif %}>
+                  <label class="form-check-label small" for="cal_day_{{ n }}">{{ label }}</label>
+                </div>
+                {% endfor %}
+              </div>
+              <div class="form-text small">If none are checked, the chatbot falls back to Mon–Fri.</div>
+            </div>
+
+            <!-- Numeric window fields -->
+            {% for key, label, help, lo, hi in sched_fields %}
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold mb-1" for="{{ key }}">{{ label }}</label>
+              <input type="number" class="form-control form-control-sm" id="{{ key }}"
+                     name="{{ key }}" value="{{ sched_values[key] }}" min="{{ lo }}" max="{{ hi }}"
+                     placeholder="{{ sched_defaults[key] }}">
+              <div class="form-text small">{{ help }} · default <code>{{ sched_defaults[key] }}</code></div>
+            </div>
+            {% endfor %}
+
+            <!-- Timezone -->
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold mb-1" for="cal_timezone">Timezone</label>
+              <select class="form-select form-select-sm" id="cal_timezone" name="cal_timezone">
+                {% for name, label in timezones %}
+                <option value="{{ name }}" {% if name == current_tz %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text small">Times are shown to customers in this timezone.</div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Vendor Config -->
     <div class="col-12">
       <div class="card">

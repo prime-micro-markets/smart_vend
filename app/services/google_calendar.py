@@ -13,33 +13,82 @@ customer to confirm.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.services import gmail_monitor
+from app.services import app_settings, gmail_monitor
 
 _FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy"
 _UTC = ZoneInfo("UTC")
-_TZ = ZoneInfo("America/Chicago")  # Bay County FL is Central time
 
 # Which calendar to read. "primary" = the connected account's main calendar.
 _CALENDAR_ID = "primary"
 
-# Business-hours / slotting config. Constants for now; promote to AppSetting later
-# if the team wants to tune these from the UI.
-_BUSINESS_DAYS = {0, 1, 2, 3, 4}  # Mon-Fri (Monday = 0)
-_OPEN_HOUR = 9                    # first slot starts 9:00 AM CT
-_CLOSE_HOUR = 17                  # last slot ends by 5:00 PM CT
-_SLOT_MINUTES = 30
-_LOOKAHEAD_DAYS = 7
-_MAX_SLOTS = 8
+# Fallback business-hours / slotting config. The live values come from the
+# AppSetting table (Settings → Scheduling); these mirror app_settings.DEFAULTS
+# and are only used if a row is missing or unparseable.
+_DEFAULT_TZ = "America/Chicago"  # Bay County FL is Central time
+_DEFAULT_BUSINESS_DAYS = {0, 1, 2, 3, 4}  # Mon-Fri (Monday = 0)
 
 # A busy block from the calendar: (start, end), both tz-aware UTC.
 BusyInterval = tuple[datetime, datetime]
+
+
+@dataclass(frozen=True)
+class SchedulingConfig:
+    """The tunable calendar window, resolved from AppSetting at request time."""
+
+    tz: ZoneInfo
+    business_days: set[int]
+    open_hour: int
+    close_hour: int
+    slot_minutes: int
+    lookahead_days: int
+    max_slots: int
+
+
+def parse_business_days(raw: str) -> set[int]:
+    """Parse a stored ``"0,1,2,3,4"`` string into a set of weekday ints (0=Mon).
+
+    Ignores junk and out-of-range values; falls back to Mon-Fri if nothing valid
+    remains so the chatbot never ends up offering zero days by accident.
+    """
+    days: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit() and 0 <= int(part) <= 6:
+            days.add(int(part))
+    return days or set(_DEFAULT_BUSINESS_DAYS)
+
+
+def _resolve_tz(raw: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(raw or _DEFAULT_TZ)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(_DEFAULT_TZ)
+
+
+def load_scheduling_config(db: Session) -> SchedulingConfig:
+    """Resolve the calendar window from the Settings → Scheduling values."""
+    open_hour = app_settings.get_int(db, "cal_open_hour", minimum=0, maximum=23)
+    close_hour = app_settings.get_int(db, "cal_close_hour", minimum=1, maximum=23)
+    # A close hour at or below open would yield no slots; widen to a safe default.
+    if close_hour <= open_hour:
+        close_hour = max(open_hour + 1, 17)
+    return SchedulingConfig(
+        tz=_resolve_tz(app_settings.get_str(db, "cal_timezone")),
+        business_days=parse_business_days(app_settings.get_str(db, "cal_business_days")),
+        open_hour=open_hour,
+        close_hour=close_hour,
+        slot_minutes=app_settings.get_int(db, "cal_slot_minutes", minimum=5, maximum=480),
+        lookahead_days=app_settings.get_int(db, "cal_lookahead_days", minimum=1, maximum=60),
+        max_slots=app_settings.get_int(db, "cal_max_slots", minimum=1, maximum=50),
+    )
 
 
 def _get_busy(db: Session, time_min: datetime, time_max: datetime) -> list[BusyInterval]:
@@ -75,23 +124,30 @@ def _overlaps(slot_start: datetime, slot_end: datetime, busy: list[BusyInterval]
     return any(slot_start < b_end and slot_end > b_start for b_start, b_end in busy)
 
 
-def get_open_slots(db: Session, max_slots: int = _MAX_SLOTS) -> list[datetime]:
-    """Return up to max_slots open slot start times (tz-aware, Central) over the next week."""
-    now = datetime.now(tz=_TZ)
-    horizon = now + timedelta(days=_LOOKAHEAD_DAYS)
+def get_open_slots(db: Session, max_slots: int | None = None) -> list[datetime]:
+    """Return up to max_slots open slot start times (tz-aware) over the lookahead window.
+
+    The business days, hours, slot length, look-ahead, timezone, and cap are read
+    from the Settings → Scheduling config; pass max_slots to override the cap.
+    """
+    cfg = load_scheduling_config(db)
+    cap = cfg.max_slots if max_slots is None else max_slots
+
+    now = datetime.now(tz=cfg.tz)
+    horizon = now + timedelta(days=cfg.lookahead_days)
     busy = _get_busy(db, now, horizon)
 
     slots: list[datetime] = []
     day = now.date()
-    for _ in range(_LOOKAHEAD_DAYS + 1):
-        if day.weekday() in _BUSINESS_DAYS:
-            slot_start = datetime(day.year, day.month, day.day, _OPEN_HOUR, 0, tzinfo=_TZ)
-            day_close = datetime(day.year, day.month, day.day, _CLOSE_HOUR, 0, tzinfo=_TZ)
+    for _ in range(cfg.lookahead_days + 1):
+        if day.weekday() in cfg.business_days:
+            slot_start = datetime(day.year, day.month, day.day, cfg.open_hour, 0, tzinfo=cfg.tz)
+            day_close = datetime(day.year, day.month, day.day, cfg.close_hour, 0, tzinfo=cfg.tz)
             while slot_start < day_close:
-                slot_end = slot_start + timedelta(minutes=_SLOT_MINUTES)
+                slot_end = slot_start + timedelta(minutes=cfg.slot_minutes)
                 if slot_start > now and not _overlaps(slot_start, slot_end, busy):
                     slots.append(slot_start)
-                    if len(slots) >= max_slots:
+                    if len(slots) >= cap:
                         return slots
                 slot_start = slot_end
         day += timedelta(days=1)
@@ -99,14 +155,19 @@ def get_open_slots(db: Session, max_slots: int = _MAX_SLOTS) -> list[datetime]:
 
 
 def _format_label(dt_local: datetime) -> str:
-    """e.g. 'Tuesday, May 27 at 10:00 AM CT'.
+    """e.g. 'Tuesday, May 27 at 10:00 AM CST'.
+
+    The timezone suffix is derived from the slot's own tzinfo (tzname()) so it
+    stays correct when the configured timezone changes — no hardcoded 'CT'.
 
     Built without the %-d / %-I strftime flags, which are glibc-only and raise
     ValueError on Windows (the bug that made the old Calendly output show raw
     ISO timestamps during local testing).
     """
     time_part = dt_local.strftime("%I:%M %p").lstrip("0")
-    return f"{dt_local.strftime('%A, %B')} {dt_local.day} at {time_part} CT"
+    tz_abbr = dt_local.tzname() or ""
+    suffix = f" {tz_abbr}" if tz_abbr else ""
+    return f"{dt_local.strftime('%A, %B')} {dt_local.day} at {time_part}{suffix}"
 
 
 def format_slots_for_chat(slots: list[datetime]) -> str:
@@ -119,7 +180,7 @@ def format_slots_for_chat(slots: list[datetime]) -> str:
         return f"{msg} Please email primemicromarkets@gmail.com and we'll find a time that works."
 
     lines = "\n".join(f"• {_format_label(s)}" for s in slots)
-    body = "Here are the next available consultation times (Central):\n" + lines
+    body = "Here are the next available consultation times:\n" + lines
     if booking_url:
         body += f"\n\nBook your preferred time here: {booking_url}"
     else:

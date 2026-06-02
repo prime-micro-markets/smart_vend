@@ -706,6 +706,9 @@ def _error_message(exc: Exception) -> str:
 
 # Marker that google_calendar.format_slots_for_chat prefixes to a real slot list.
 _AVAIL_SLOTS_MARKER = "Here are the next available consultation times"
+# A clock time like "10:00 AM" — used to tell if the model already wrote out the
+# slot times itself (timezone-agnostic, so it survives a configured-tz change).
+_CLOCK_TIME_RE = re.compile(r"\d{1,2}:\d{2}\s*(?:AM|PM)", re.IGNORECASE)
 
 
 def _ensure_availability_shown(reply: str, captured: dict) -> str:
@@ -719,7 +722,7 @@ def _ensure_availability_shown(reply: str, captured: dict) -> str:
     avail = captured.get("availability", "")
     if not avail.startswith(_AVAIL_SLOTS_MARKER):
         return reply  # tool unused, no openings, or a fallback link — leave as-is
-    if "AM CT" in reply or "PM CT" in reply:
+    if _CLOCK_TIME_RE.search(reply):
         return reply  # model already listed the times; don't duplicate
     return f"{avail}\n\n{reply}".strip() if reply.strip() else avail
 
