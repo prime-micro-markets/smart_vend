@@ -320,6 +320,28 @@ def test_auto_send_affirmation_uses_on_file_email(db: Session, monkeypatch) -> N
     assert "emailed your confirmation" in out.lower()
 
 
+def test_auto_send_asks_for_address_when_affirmed_without_email(db: Session, monkeypatch) -> None:
+    from app.models.chat import ChatMessage
+
+    _book(db, monkeypatch, email=None, session="auto_ask")  # booked with no email on file
+    db.add(
+        ChatMessage(
+            session_id="auto_ask",
+            role="assistant",
+            content="Would you like me to email you a confirmation?",
+        )
+    )
+    db.commit()
+    called = {"n": 0}
+    monkeypatch.setattr(
+        email_sender, "send_email", lambda *a, **k: called.update(n=called["n"] + 1)
+    )
+    out = agent._maybe_send_confirmation_email("auto_ask", "yes please", "ok", {}, db)
+    assert "what email address" in out.lower()
+    assert called["n"] == 0  # nothing sent; we asked for the address first
+    assert agent._latest_booking_record("auto_ask", db).get("email_sent") is not True
+
+
 def test_auto_send_skips_on_booking_turn(db: Session, monkeypatch) -> None:
     _book(db, monkeypatch, email="jane@example.com", session="auto4")
     called = {"n": 0}

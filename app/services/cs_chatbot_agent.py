@@ -211,24 +211,34 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
             "  1. FIRST ask the customer their preference: which day works best, and do they "
             "prefer morning or afternoon? Ask before listing any times.\n"
             "  2. Call check_availability with their stated 'day' and/or 'period' to fetch "
-            "matching open slots, and show them as a short bulleted list. If they have no "
+            "matching open slots, and show them as a short bulleted list. These are EXAMPLES to "
+            "help them choose — they are NOT the only options. The customer may pick any time "
+            "during our business hours, including a time you didn't list. If they have no "
             "preference, call it with no filters. Help them narrow to one specific time.\n"
-            "  3. Once they confirm a specific time, collect the details needed to book: their "
-            "full name, phone number, and the location address for the proposed unit (email is "
-            "optional but lets us send a calendar invite). Ask for anything still missing.\n"
+            "  3. Once they name a time, collect the details needed to book: their full name, "
+            "phone number, and the location address for the proposed unit (email is optional but "
+            "lets us send a calendar invite). Ask for anything still missing.\n"
             "  4. Read the chosen time and their details back to confirm, then call "
-            "book_appointment with the slot's date and time exactly as you showed them, plus "
-            "name, phone, and location. Only call book_appointment after they've confirmed.\n"
-            "  5. After a booking succeeds, ask the visitor if they'd like an email confirming "
-            "the appointment, and if so ask for their email address. When they provide it (or "
-            "approve one already on file), the confirmation is sent automatically — just "
+            "book_appointment with the date and the EXACT time the customer asked for, plus name, "
+            "phone, and location. Only call book_appointment after they've confirmed.\n"
+            "  CRITICAL: If the customer asks for a time you did not list (e.g. you showed 12:30 "
+            "and they say '2pm'), do NOT tell them it's unavailable and do NOT just re-list your "
+            "slots. Take their details and call book_appointment with the time they requested. "
+            "Only book_appointment knows real availability — it checks the live calendar and will "
+            "tell you if that exact time is genuinely taken. Never refuse a requested time "
+            "yourself.\n"
+            "  5. After a booking succeeds, ask the visitor if they'd like an email confirming the "
+            "appointment. If yes, ask for their email address — we usually do NOT have one yet, so "
+            "never say you'll send it to an address 'on file' unless they gave one while booking. "
+            "When they provide the address, the confirmation is sent automatically — just "
             "acknowledge it and wrap up. Do NOT call book_appointment or check_availability "
             "again.\n"
             "  IMPORTANT: Once an appointment has been booked in this conversation, do not start "
             "scheduling again or offer new times unless the visitor explicitly asks to change it "
             "or book another. Collecting their email is NOT a request for a new appointment.\n"
-            "  Never invent times — only offer what check_availability returns. Never claim a "
-            "booking is made unless book_appointment succeeded."
+            "  Never fabricate openings when proactively suggesting times, and never claim a "
+            "booking is made unless book_appointment succeeded. When the customer proposes their "
+            "own time, let book_appointment decide whether it's available rather than refusing it."
         )
     elif settings.google_booking_url:
         scheduling_note = (
@@ -967,14 +977,17 @@ def _maybe_send_confirmation_email(
         return reply
 
     email_in_msg = _EMAIL_RE.search(user_message or "")
+    affirmed = bool(
+        _AFFIRM_RE.search(user_message or "") and _last_assistant_offered_email(session_id, db)
+    )
     if email_in_msg:
         recipient = email_in_msg.group(0)
-    elif (
-        record.get("email")
-        and _AFFIRM_RE.search(user_message or "")
-        and _last_assistant_offered_email(session_id, db)
-    ):
+    elif affirmed and record.get("email"):
         recipient = record["email"]
+    elif affirmed:
+        # They said yes but we have no address on file. Ask for it deterministically so
+        # the model can't wrongly claim it'll send to an address "on file".
+        return "Great — what email address should I send the confirmation to?"
     else:
         return reply  # nothing actionable this turn
 
