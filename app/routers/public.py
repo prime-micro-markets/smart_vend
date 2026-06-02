@@ -1,17 +1,66 @@
 import logging
+from datetime import date
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from app.views import templates
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["public"])
 
+# Canonical public host. The www->apex redirect (see app/main.py) guarantees
+# this is the single host crawlers ever resolve to, so every SEO URL uses it.
+SITE_URL = "https://primemicromarkets.com"
+
 
 @router.get("/", response_class=HTMLResponse)
 async def landing(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "public/landing.html", {})
+
+
+_ROBOTS_TXT = f"""\
+User-agent: *
+Allow: /$
+Allow: /chatbot/
+Disallow: /dashboard
+Disallow: /equipment/
+Disallow: /research/
+Disallow: /financial/
+Disallow: /locations/
+Disallow: /sales/
+Disallow: /inventory/
+Disallow: /leads/
+Disallow: /customer-service/
+Disallow: /crm/
+Disallow: /settings/
+Disallow: /auth/
+Sitemap: {SITE_URL}/sitemap.xml
+"""
+
+
+@router.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt() -> PlainTextResponse:
+    # Must be served from the site root: StaticFiles is mounted at /static, so a
+    # file there would not answer /robots.txt. This only guides crawling; the
+    # noindex meta in base.html is the hard guarantee for the protected app.
+    return PlainTextResponse(_ROBOTS_TXT)
+
+
+@router.get("/sitemap.xml")
+async def sitemap_xml() -> Response:
+    # Only the public marketing surface belongs here. The whole internal app is
+    # Disallow'd in robots.txt and carries noindex, so it stays out of the index.
+    lastmod = date.today().isoformat()
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url><loc>{SITE_URL}/</loc>"
+        f"<lastmod>{lastmod}</lastmod>"
+        "<changefreq>weekly</changefreq><priority>1.0</priority></url>\n"
+        "</urlset>\n"
+    )
+    return Response(content=xml, media_type="application/xml")
 
 
 @router.post("/contact", response_class=HTMLResponse)

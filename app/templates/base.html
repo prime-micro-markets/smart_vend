@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Internal management app: keep it out of search indexes entirely. -->
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="/static/images/primeMM_Logo.png">
   <title>{% block title %}Prime Micro Markets{% endblock %}</title>
   <!-- Resolve saved theme before CSS parses — prevents light→dark flash -->
   <script>document.documentElement.setAttribute('data-bs-theme',localStorage.getItem('pmm-theme')||'light');</script>
