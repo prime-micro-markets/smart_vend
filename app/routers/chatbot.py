@@ -35,10 +35,9 @@ def chatbot_message(
     db.commit()
     db.refresh(user_msg)
 
-    # Call AI synchronously — FastAPI runs sync handlers in a thread pool
-    reply = cs_chatbot_agent.get_chatbot_reply(
-        session_id, message.strip(), db, before_id=user_msg.id
-    )
+    # Call AI synchronously — FastAPI runs sync handlers in a thread pool.
+    # get_chatbot_reply persists the assistant message itself; we re-fetch it below.
+    cs_chatbot_agent.get_chatbot_reply(session_id, message.strip(), db, before_id=user_msg.id)
 
     # Fetch the assistant message that get_chatbot_reply just saved
     assistant_msg = (
@@ -82,26 +81,35 @@ def chatbot_submit_lead(
 ) -> HTMLResponse:
     if not name.strip():
         return HTMLResponse(
-            '<p style="color:#dc3545;font-size:.75rem;margin:4px 0 6px;">Please enter your name.</p>',
+            '<p style="color:#dc3545;font-size:.75rem;margin:4px 0 6px;">'
+            "Please enter your name.</p>",
             status_code=422,
         )
     from app.services.cs_chatbot_agent import _handle_capture_lead
+
     _handle_capture_lead(
-        {"name": name, "email": email, "phone": phone,
-         "location": location, "description": description},
+        {
+            "name": name,
+            "email": email,
+            "phone": phone,
+            "location": location,
+            "description": description,
+        },
         session_id.strip() or "widget-form",
         db,
     )
     return HTMLResponse(
         '<div style="text-align:center;padding:12px 0;">'
         '<div style="font-size:2rem;margin-bottom:6px;">✅</div>'
-        '<p style="font-weight:600;color:#198754;margin-bottom:4px;font-size:.88rem;">Request received!</p>'
-        '<p style="font-size:.75rem;color:#666;margin-bottom:10px;">A real team member will personally reach out soon.</p>'
+        '<p style="font-weight:600;color:#198754;margin-bottom:4px;font-size:.88rem;">'
+        "Request received!</p>"
+        '<p style="font-size:.75rem;color:#666;margin-bottom:10px;">'
+        "A real team member will personally reach out soon.</p>"
         '<button type="button" onclick="hideCallbackForm()" '
         'style="background:none;border:1px solid #dee2e6;border-radius:6px;'
         'padding:4px 14px;font-size:.78rem;cursor:pointer;color:#6c757d;">'
-        'Back to Chat</button>'
-        '</div>'
+        "Back to Chat</button>"
+        "</div>"
     )
 
 

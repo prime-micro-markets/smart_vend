@@ -251,15 +251,15 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
 
     if include_tools:
         escalation_note = (
-            "When a question or situation is beyond your ability to resolve — such as legal matters, "
-            "contract disputes, or situations requiring human judgement — use the "
+            "When a question or situation is beyond your ability to resolve — such as legal "
+            "matters, contract disputes, or situations requiring human judgement — use the "
             "request_human_followup tool."
         )
     else:
         escalation_note = (
-            "When a question or situation is beyond your ability to resolve — such as legal matters, "
-            "contract disputes, or situations requiring human judgement — ask the customer to email "
-            "us at primemicromarkets@gmail.com and a team member will follow up."
+            "When a question or situation is beyond your ability to resolve — such as legal "
+            "matters, contract disputes, or situations requiring human judgement — ask the "
+            "customer to email us at primemicromarkets@gmail.com and a team member will follow up."
         )
 
     lead_capture_note = (
@@ -1325,8 +1325,8 @@ def _extract_ollama_lead(reply: str, session_id: str, db: Session) -> str:
         return reply
     try:
         _save_lead_from_conversation(session_id, db)
-    except Exception:
-        pass  # DB error must not break the chat response
+    except Exception as exc:
+        _log.debug("Ollama lead capture failed (non-fatal): %s", exc)  # must not break chat
     return _CONTACT_MARKER_RE.sub("", reply).strip()
 
 

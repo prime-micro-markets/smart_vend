@@ -12,7 +12,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _CATALOG_URL = "https://vendguys.com/collections/machines/products.json?limit=250"
-_CANTALOUPE_URL = "https://store.cantaloupe.com/collections/coolers-and-freezers/products.json?limit=250"
+_CANTALOUPE_URL = (
+    "https://store.cantaloupe.com/collections/coolers-and-freezers/products.json?limit=250"
+)
 _SSL_VERIFY = False  # Windows Python can't verify Shopify's intermediate CA via certifi
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -50,14 +52,16 @@ def _shopify_products(url: str, base_product_url: str) -> list[VGProduct]:
         body_text = _strip_html(body_html)
 
         handle = p.get("handle", "")
-        result.append(VGProduct(
-            title=p.get("title", ""),
-            handle=handle,
-            page_url=f"{base_product_url}{handle}",
-            image_url=image_url,
-            price=price,
-            body_text=body_text,
-        ))
+        result.append(
+            VGProduct(
+                title=p.get("title", ""),
+                handle=handle,
+                page_url=f"{base_product_url}{handle}",
+                image_url=image_url,
+                price=price,
+                body_text=body_text,
+            )
+        )
 
     return result
 
@@ -104,14 +108,14 @@ def scrape_url(url: str) -> tuple[str, str | None]:
 
     # Fallback: first non-UI img[src] with an image extension
     if not og_image:
-        _SKIP = {"logo", "icon", "flag", "banner", "footer", "nav", "avatar", "sprite", "badge"}
+        skip = {"logo", "icon", "flag", "banner", "footer", "nav", "avatar", "sprite", "badge"}
         for img_url in re.findall(
             r'<img[^>]+src=["\']([^"\']+\.(?:jpg|jpeg|png|webp)(?:\?[^"\']*)?)["\']',
             html,
             re.IGNORECASE,
         ):
             low = img_url.lower()
-            if not any(s in low for s in _SKIP):
+            if not any(s in low for s in skip):
                 og_image = img_url.strip()
                 break
 

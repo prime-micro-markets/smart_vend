@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
 
 _GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 — endpoint URL, not a secret
 
 _ERROR_MESSAGES: dict[str, str] = {
     "oauth_failed": "Google sign-in failed. Please try again.",
@@ -43,15 +43,17 @@ async def google_login(request: Request) -> RedirectResponse:
     request.session["oauth_state"] = state
 
     redirect_uri = str(request.url_for("google_callback"))
-    params = urlencode({
-        "client_id": settings.google_client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state,
-        "access_type": "online",
-        "prompt": "select_account",
-    })
+    params = urlencode(
+        {
+            "client_id": settings.google_client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "access_type": "online",
+            "prompt": "select_account",
+        }
+    )
     return RedirectResponse(f"{_GOOGLE_AUTH_URL}?{params}", status_code=302)
 
 

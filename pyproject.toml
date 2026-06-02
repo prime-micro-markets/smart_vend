@@ -34,9 +34,14 @@ ignore = [
 "tests/*" = ["ANN", "S", "T20"]
 "scripts/*" = ["T20"]
 "alembic/*" = ["ANN", "UP", "F401", "I001", "W291"]
-"app/services/price_fetcher/*" = ["S110", "E501"]  # scrapers have intentional except-pass fallbacks
+# Scrapers intentionally bypass TLS verification and swallow per-vendor errors so
+# one flaky storefront can't kill a batch; S501/S110/E501 are expected there.
+"app/services/price_fetcher/**" = ["S110", "E501", "S501"]
 "app/services/price_comparator.py" = ["S110", "E501"]
 "app/routers/inventory.py" = ["S110", "E501"]  # JSON parse fallbacks match existing router pattern
+# The store geocoder talks to a public API over urllib with an unverified context
+# by design (no client cert story, non-sensitive lat/long lookups).
+"app/services/store_locator.py" = ["S310", "S323"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

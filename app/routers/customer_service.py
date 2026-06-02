@@ -9,8 +9,6 @@ from collections import defaultdict
 from datetime import date as date_type
 from datetime import datetime, timedelta
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func as sql_func
@@ -24,6 +22,8 @@ from app.models.settings import AppSetting
 from app.services import cs_manager_agent
 from app.services.auth import require_user
 from app.views import templates
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/customer-service", tags=["customer_service"])
 
@@ -680,10 +680,11 @@ def cs_manager_chat(
         f'<div class="chat-msg chat-msg--user">'
         f'<div class="chat-bubble chat-bubble--user">{message.strip()}</div></div>'
     )
+    asst_ts = asst_msg.created_at.strftime("%H:%M") if asst_msg.created_at else ""
     asst_html = (
         f'<div class="chat-msg chat-msg--assistant">'
         f'<div class="chat-bubble chat-bubble--assistant">{reply}</div>'
-        f'<div class="chat-ts">{asst_msg.created_at.strftime("%H:%M") if asst_msg.created_at else ""}</div>'
+        f'<div class="chat-ts">{asst_ts}</div>'
         f"</div>"
     )
     return HTMLResponse(content=user_html + asst_html)
@@ -693,7 +694,10 @@ def cs_manager_chat(
 
 
 def _parse_dt(v: object) -> datetime | None:
-    """Coerce a value to datetime — SQLite aggregate functions return ISO strings, not datetime objects."""
+    """Coerce a value to datetime.
+
+    SQLite aggregate functions return ISO strings, not datetime objects.
+    """
     if v is None:
         return None
     if isinstance(v, datetime):

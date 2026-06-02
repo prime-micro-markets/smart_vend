@@ -6,8 +6,6 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-
-logger = logging.getLogger(__name__)
 from sqlalchemy import func as sql_func
 from sqlalchemy.orm import Session
 
@@ -16,6 +14,8 @@ from app.models.agent import AgentJob
 from app.models.sales import OutreachLog, Prospect
 from app.services import agent, email_sender
 from app.views import templates
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -127,7 +127,7 @@ def leads_research(
     except Exception:
         db.rollback()
         logger.exception("Failed to create research job")
-        raise HTTPException(status_code=500, detail="Database error creating job")
+        raise HTTPException(status_code=500, detail="Database error creating job") from None
     background_tasks.add_task(agent.run_research_job, job.id)
     return RedirectResponse(url=f"/leads/jobs/{job.id}", status_code=303)
 
@@ -142,22 +142,20 @@ def leads_jobs_list(request: Request, db: Session = Depends(get_db)) -> HTMLResp
         .all()
     )
     return templates.TemplateResponse(
-        request, "leads/_job_history.html", {"jobs": jobs, "prospect_names": _prospect_names(db, jobs)}
+        request,
+        "leads/_job_history.html",
+        {"jobs": jobs, "prospect_names": _prospect_names(db, jobs)},
     )
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
-def leads_job_status(
-    job_id: int, request: Request, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def leads_job_status(job_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     job = db.get(AgentJob, job_id)
     if not job:
         return Response(status_code=404)
     prospects_list: list[Prospect] = []
     if job.status == "done" and job.job_type == "research":
-        prospects_list = (
-            db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
-        )
+        prospects_list = db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
     return templates.TemplateResponse(
         request,
         "leads/job_status.html",
@@ -166,17 +164,13 @@ def leads_job_status(
 
 
 @router.get("/jobs/{job_id}/poll", response_class=HTMLResponse)
-def leads_job_poll(
-    job_id: int, request: Request, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def leads_job_poll(job_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     job = db.get(AgentJob, job_id)
     if not job:
         return HTMLResponse(content="<div>Job not found</div>", status_code=404)
     prospects_list: list[Prospect] = []
     if job.status == "done" and job.job_type == "research":
-        prospects_list = (
-            db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
-        )
+        prospects_list = db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
     return templates.TemplateResponse(
         request,
         "leads/_job_status_card.html",
@@ -298,9 +292,7 @@ def leads_send_email(
             )
             db.add(log)
             db.commit()
-            return RedirectResponse(
-                url=f"/sales/{prospect.id}?preview_sent=1", status_code=303
-            )
+            return RedirectResponse(url=f"/sales/{prospect.id}?preview_sent=1", status_code=303)
         return RedirectResponse(url="/leads/?preview_sent=1", status_code=303)
 
     try:
@@ -337,9 +329,12 @@ def leads_send_email(
 @router.get("/usage", response_class=HTMLResponse)
 def leads_usage(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     today_start = datetime.combine(date.today(), datetime.min.time())
-    today_tokens = db.query(sql_func.sum(AgentJob.tokens_used)).filter(
-        AgentJob.created_at >= today_start
-    ).scalar() or 0
+    today_tokens = (
+        db.query(sql_func.sum(AgentJob.tokens_used))
+        .filter(AgentJob.created_at >= today_start)
+        .scalar()
+        or 0
+    )
     total_tokens = db.query(sql_func.sum(AgentJob.tokens_used)).scalar() or 0
     latest = (
         db.query(AgentJob)

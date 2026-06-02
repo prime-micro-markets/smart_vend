@@ -74,8 +74,8 @@ def _build_system_prompt(
         f"Do not keep searching if you already have {max_results} suppliers.\n\n"
         f"Output ONLY a valid JSON array — no prose before or after it. "
         f"Use EXACTLY this format (empty string for any unknown field):\n\n"
-        f'[\n'
-        f'  {{\n'
+        f"[\n"
+        f"  {{\n"
         f'    "supplier_name": "Sam\'s Club",\n'
         f'    "supplier_type": "cash & carry",\n'
         f'    "categories_served": "snacks, beverages, candy, fresh food",\n'
@@ -85,8 +85,8 @@ def _build_system_prompt(
         f'    "pricing_notes": "membership required, bulk pricing",\n'
         f'    "delivery_notes": "in-store pickup or delivery with Plus membership",\n'
         f'    "notes": "nearest location: Panama City"\n'
-        f'  }}\n'
-        f']\n\n'
+        f"  }}\n"
+        f"]\n\n"
         f"Key names must be exactly: supplier_name, supplier_type, categories_served, "
         f"contact_name, contact_phone, website, pricing_notes, delivery_notes, notes. "
         f"No other text before or after the JSON array."
@@ -147,7 +147,7 @@ def run_inventory_search_job(job_id: int) -> None:
 
             system_prompt = _build_system_prompt(categories, location, search_focus, max_results)
 
-            _COMPILE_INSTRUCTION = (
+            compile_instruction = (
                 "Search limit reached. Now output your final supplier list.\n"
                 "CRITICAL: You MUST include suppliers from your own training knowledge — "
                 "Sysco, US Foods, Performance Food Group, Sam's Club, Costco, "
@@ -194,7 +194,9 @@ def run_inventory_search_job(job_id: int) -> None:
                         job.ratelimit_tokens_remaining = int(rl_remaining) if rl_remaining else None
                         job.ratelimit_tokens_reset = rl_reset
                     except Exception:
-                        logger.debug("Failed to parse rate-limit headers for inventory job %d", job_id)
+                        logger.debug(
+                            "Failed to parse rate-limit headers for inventory job %d", job_id
+                        )
 
                 messages.append({"role": "assistant", "content": response.content})
 
@@ -203,11 +205,13 @@ def run_inventory_search_job(job_id: int) -> None:
                         block.text for block in response.content if hasattr(block, "text")
                     )
                     found_suppliers = _extract_json_suppliers(final_text)
-                    log_entries.append({
-                        "event": "end_turn",
-                        "suppliers_parsed": len(found_suppliers),
-                        "response_preview": final_text[:400],
-                    })
+                    log_entries.append(
+                        {
+                            "event": "end_turn",
+                            "suppliers_parsed": len(found_suppliers),
+                            "response_preview": final_text[:400],
+                        }
+                    )
                     break
 
                 tool_results = []
@@ -223,11 +227,13 @@ def run_inventory_search_job(job_id: int) -> None:
                             result_text = json.dumps(results)
                         except Exception as search_exc:
                             result_text = f"Search error: {search_exc}"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text,
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result_text,
+                            }
+                        )
 
                 if not tool_results:
                     log_entries.append({"event": "no_tool_results_break"})
@@ -238,12 +244,13 @@ def run_inventory_search_job(job_id: int) -> None:
                     # so Claude receives search data + instruction in one message (no consecutive
                     # user turns, which causes the API to drop context).
                     log_entries.append({"event": "max_tool_calls_reached"})
-                    messages.append({
-                        "role": "user",
-                        "content": tool_results + [
-                            {"type": "text", "text": _COMPILE_INSTRUCTION}
-                        ],
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": tool_results
+                            + [{"type": "text", "text": compile_instruction}],
+                        }
+                    )
                     needs_compile = True
                     break
 
@@ -270,11 +277,13 @@ def run_inventory_search_job(job_id: int) -> None:
                     block.text for block in compile_resp.content if hasattr(block, "text")
                 )
                 found_suppliers = _extract_json_suppliers(final_text)
-                log_entries.append({
-                    "event": "forced_compile",
-                    "suppliers_parsed": len(found_suppliers),
-                    "response_preview": final_text[:600],
-                })
+                log_entries.append(
+                    {
+                        "event": "forced_compile",
+                        "suppliers_parsed": len(found_suppliers),
+                        "response_preview": final_text[:600],
+                    }
+                )
 
             # Persist results JSON for display on job page
             job.draft_body = json.dumps(found_suppliers)
@@ -285,11 +294,7 @@ def run_inventory_search_job(job_id: int) -> None:
                 name = (s.get("supplier_name") or "").strip()
                 if not name:
                     continue
-                exists = (
-                    db.query(Supplier)
-                    .filter(Supplier.name.ilike(name))
-                    .first()
-                )
+                exists = db.query(Supplier).filter(Supplier.name.ilike(name)).first()
                 if exists:
                     skipped += 1
                 else:

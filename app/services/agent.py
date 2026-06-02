@@ -62,8 +62,8 @@ def _build_research_system_prompt(
         "phone, and website — these are reliably findable.\n\n"
         "When you have gathered enough results, output ONLY a valid JSON array. "
         "Each object must have these exact keys (use empty string if unknown):\n"
-        '  company_name, address, city, venue_type, foot_traffic_estimate, '
-        'contact_name, phone, website, notes\n\n'
+        "  company_name, address, city, venue_type, foot_traffic_estimate, "
+        "contact_name, phone, website, notes\n\n"
         "Do not include any text before or after the JSON array. "
         "Only include businesses with a real company_name."
     )
@@ -88,12 +88,17 @@ def _build_template_email(prospect: Prospect) -> tuple[str, str]:
     name_line = f"Hi {prospect.contact_name}," if prospect.contact_name else "Hi,"
     body = (
         f"{name_line}\n\n"
-        f"I'm reaching out from Prime Micro Markets, a veteran-owned business based in {prospect.city}. "
-        f"We partner with high-traffic locations like {prospect.company_name} to place our state-of-the-art "
-        f"smart cooler units at no cost — no equipment fees, no stocking hassle, no risk to you.\n\n"
+        f"I'm reaching out from Prime Micro Markets, a veteran-owned business based in "
+        f"{prospect.city}. "
+        f"We partner with high-traffic locations like {prospect.company_name} to place our "
+        f"state-of-the-art "
+        f"smart cooler units at no cost — no equipment fees, no stocking hassle, no risk to "
+        f"you.\n\n"
         f"Our units are fully cashless, touchscreen-enabled, and remotely monitored in real time. "
-        f"We handle all restocking and maintenance, and you get a premium amenity your customers will love "
-        f"without lifting a finger. We're also flexible on product selection — we'll stock what works best "
+        f"We handle all restocking and maintenance, and you get a premium amenity your customers "
+        f"will love "
+        f"without lifting a finger. We're also flexible on product selection — we'll stock what "
+        f"works best "
         f"for your clientele.\n\n"
         f"Given the foot traffic at {prospect.company_name}, I think we'd be a great fit. "
         f"Would you have 10 minutes for a quick call to see if it makes sense?\n\n"
@@ -184,11 +189,13 @@ def run_research_job(job_id: int) -> None:
                         block.text for block in response.content if hasattr(block, "text")
                     )
                     leads = _extract_json_leads(final_text)
-                    log_entries.append({
-                        "event": "end_turn",
-                        "leads_parsed": len(leads),
-                        "response_preview": final_text[:400],
-                    })
+                    log_entries.append(
+                        {
+                            "event": "end_turn",
+                            "leads_parsed": len(leads),
+                            "response_preview": final_text[:400],
+                        }
+                    )
                     break
 
                 tool_results = []
@@ -204,11 +211,13 @@ def run_research_job(job_id: int) -> None:
                             result_text = json.dumps(results)
                         except Exception as search_exc:
                             result_text = f"Search error: {search_exc}"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text,
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result_text,
+                            }
+                        )
 
                 if not tool_results:
                     # Response had no tool calls and wasn't end_turn — force compilation
@@ -218,15 +227,18 @@ def run_research_job(job_id: int) -> None:
             else:
                 # Tool call limit reached — ask Claude to compile what it already found
                 log_entries.append({"event": "max_tool_calls_reached"})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "You have reached the search limit. "
-                        "Output ONLY the JSON array of every business you found so far. "
-                        "Include any business you identified even if details are incomplete — "
-                        "use empty string for unknown fields. No other text, just the JSON array."
-                    ),
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "You have reached the search limit. "
+                            "Output ONLY the JSON array of every business you found so far. "
+                            "Include any business you identified even if details are incomplete — "
+                            "use empty string for unknown fields. No other text, just the JSON "
+                            "array."
+                        ),
+                    }
+                )
                 compile_raw = client.messages.with_raw_response.create(
                     model=research_model,
                     max_tokens=2048,
@@ -245,11 +257,13 @@ def run_research_job(job_id: int) -> None:
                     block.text for block in compile_resp.content if hasattr(block, "text")
                 )
                 leads = _extract_json_leads(final_text)
-                log_entries.append({
-                    "event": "forced_compile",
-                    "leads_parsed": len(leads),
-                    "response_preview": final_text[:400],
-                })
+                log_entries.append(
+                    {
+                        "event": "forced_compile",
+                        "leads_parsed": len(leads),
+                        "response_preview": final_text[:400],
+                    }
+                )
 
             created = skipped = 0
             for lead in leads:
@@ -311,12 +325,16 @@ def _build_email_draft_prompt(prospect: Prospect) -> str:
     return (
         f"You are writing a cold outreach email on behalf of Prime Micro Markets.\n\n"
         f"About us: {settings.company_blurb}\n\n"
-        f"Key selling points to weave in naturally (don't list them robotically — work them into the narrative):\n"
-        f"- Zero cost to the host location: no equipment purchase, no installation fees, no stocking burden\n"
-        f"- State-of-the-art units: touchscreen interfaces, fully cashless (tap/card/mobile pay), remote monitoring\n"
+        f"Key selling points to weave in naturally (don't list them robotically — work them into "
+        f"the narrative):\n"
+        f"- Zero cost to the host location: no equipment purchase, no installation fees, no "
+        f"stocking burden\n"
+        f"- State-of-the-art units: touchscreen interfaces, fully cashless (tap/card/mobile pay), "
+        f"remote monitoring\n"
         f"- We handle everything: restocking, maintenance, and inventory — the host does nothing\n"
         f"- Product flexibility: we customize the product mix to fit the venue's clientele\n"
-        f"- Premium customer experience: modern, attractive machines that enhance the location's brand\n\n"
+        f"- Premium customer experience: modern, attractive machines that enhance the location's "
+        f"brand\n\n"
         f"Prospect details:\n"
         f"  Business: {prospect.company_name}\n"
         f"  Contact: {prospect.contact_name or 'the owner/manager'}\n"
@@ -326,9 +344,12 @@ def _build_email_draft_prompt(prospect: Prospect) -> str:
         f"  Notes: {prospect.notes or ''}\n\n"
         f"Write a short, compelling cold outreach email (3–4 paragraphs max). "
         f"Make the subject line intriguing and venue-specific — avoid generic phrases. "
-        f"The tone should be confident and professional, but warm and human — not salesy or hype-driven. "
-        f"Focus on what's in it for them: a cutting-edge amenity added to their location at zero cost or effort. "
-        f"Do NOT mention revenue sharing or passive income — the value prop is the free, premium amenity and customer experience. "
+        f"The tone should be confident and professional, but warm and human — not salesy or "
+        f"hype-driven. "
+        f"Focus on what's in it for them: a cutting-edge amenity added to their location at zero "
+        f"cost or effort. "
+        f"Do NOT mention revenue sharing or passive income — the value prop is the free, premium "
+        f"amenity and customer experience. "
         f"{scheduling_note}\n\n"
         f"Format your response exactly as:\n"
         f"Subject: <subject line>\n\n"
@@ -381,7 +402,7 @@ def run_email_draft_job(job_id: int) -> None:
             subject_match = re.match(r"Subject:\s*(.+?)(\n|$)", full_text)
             if subject_match:
                 subject = subject_match.group(1).strip()
-                body = full_text[subject_match.end():].strip()
+                body = full_text[subject_match.end() :].strip()
 
             job.draft_subject = subject
             job.draft_body = body

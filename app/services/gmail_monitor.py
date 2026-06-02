@@ -50,7 +50,7 @@ _INITIAL_LOOKBACK_SECONDS = 7 * 24 * 3600
 _OVERLAP_SECONDS = 3600
 _MAX_RESULTS = 50
 
-_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 — endpoint URL, not a secret
 _GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 _SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -167,8 +167,9 @@ def get_valid_access_token(db: Session) -> str:
                 expiry = expiry.replace(tzinfo=UTC)
             if datetime.now(tz=UTC) < expiry - timedelta(minutes=5):
                 return access_token
-        except Exception:
-            pass
+        except Exception as exc:
+            # Unparseable/funny expiry — fall through and refresh the token.
+            _log.debug("Stored token expiry unusable (%s); refreshing.", exc)
 
     # Refresh the token
     with httpx.Client(timeout=15) as client:
@@ -343,7 +344,8 @@ def poll_new_emails(db: Session) -> list[EmailApproval]:
 
         try:
             msg = _gmail_get(f"messages/{msg_id}", token, params={"format": "full"})
-        except Exception:
+        except Exception as exc:
+            _log.debug("Skipping message %s — fetch failed: %s", msg_id, exc)
             continue
 
         headers = msg.get("payload", {}).get("headers", [])
