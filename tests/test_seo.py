@@ -52,8 +52,23 @@ def test_landing_targets_local_keywords(client):
     # Core service + location terms are present somewhere on the page
     for term in ("micro market", "smart cooler", "Panama City", "Bay County"):
         assert term in html, f"missing keyword: {term}"
-    # Panama City Beach targeted in the structured data area list
+    # "vending machines" is a primary search term — must appear in both the
+    # visible copy and the metadata (case-insensitive to allow heading casing).
+    assert "vending machine" in html.lower()
+    # Panama City Beach targeted in the structured data area list + copy
     assert "Panama City Beach" in html
+
+
+def test_h1_carries_primary_keywords(client):
+    # The single H1 is the strongest on-page ranking signal.
+    import re
+    html = client.get("/").text
+    h1 = re.search(r"<h1>(.*?)</h1>", html, re.S)
+    assert h1, "landing page must have an <h1>"
+    text = h1.group(1).lower()
+    assert "vending machine" in text
+    assert "smart cooler" in text
+    assert "micro market" in text
 
 
 def test_owner_name_not_in_public_metadata(client):
