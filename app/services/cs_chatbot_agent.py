@@ -220,8 +220,13 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
             "book_appointment with the slot's date and time exactly as you showed them, plus "
             "name, phone, and location. Only call book_appointment after they've confirmed.\n"
             "  5. After a booking succeeds, ask the visitor if they'd like an email confirming "
-            "the appointment. If yes, make sure you have their email (ask for it if you don't), "
-            "then call send_appointment_email to send them the details.\n"
+            "the appointment, and if so ask for their email address. When they provide it (or "
+            "approve one already on file), the confirmation is sent automatically — just "
+            "acknowledge it and wrap up. Do NOT call book_appointment or check_availability "
+            "again.\n"
+            "  IMPORTANT: Once an appointment has been booked in this conversation, do not start "
+            "scheduling again or offer new times unless the visitor explicitly asks to change it "
+            "or book another. Collecting their email is NOT a request for a new appointment.\n"
             "  Never invent times — only offer what check_availability returns. Never claim a "
             "booking is made unless book_appointment succeeded."
         )
@@ -793,6 +798,50 @@ def _latest_booking_record(session_id: str, db: Session) -> dict | None:
         return None
 
 
+def _update_booking_record(session_id: str, db: Session, **changes: object) -> dict | None:
+    """Merge ``changes`` into the latest stored appointment record for the session."""
+    row = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "tool",
+            ChatMessage.tool_name == _BOOKING_RECORD_TOOL,
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    if not row:
+        return None
+    try:
+        data = json.loads(row.content)
+    except (ValueError, TypeError):
+        data = {}
+    data.update(changes)
+    row.content = json.dumps(data)
+    db.commit()
+    return data
+
+
+# Matches an email address / an affirmative reply, for the deterministic
+# confirmation-email path (see _maybe_send_confirmation_email).
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+_AFFIRM_RE = re.compile(
+    r"\b(yes|yep|yeah|yup|sure|please|ok|okay|sounds good|that works|go ahead|"
+    r"confirm|do it|send it)\b",
+    re.IGNORECASE,
+)
+
+
+def _send_confirmation_email_now(
+    session_id: str, record: dict, recipient: str, db: Session
+) -> bool:
+    """Send the confirmation and mark the record so it can't double-send. Raises on send failure."""
+    subject, body = _confirmation_email_content({**record, "email": recipient})
+    email_sender.send_email(recipient, subject, body)
+    _update_booking_record(session_id, db, email=recipient, email_sent=True)
+    return True
+
+
 def _confirmation_email_content(record: dict) -> tuple[str, str]:
     name = (record.get("name") or "there").strip()
     slot = record.get("slot_label") or "your selected time"
@@ -832,16 +881,16 @@ def _handle_send_confirmation_email(tool_input: dict, session_id: str, db: Sessi
             "No appointment has been booked in this conversation yet, so there's nothing "
             "to email. Book the appointment first."
         )
+    if record.get("email_sent"):
+        return f"A confirmation email was already sent to {record.get('email')}."
     recipient = (tool_input.get("email") or "").strip() or (record.get("email") or "").strip()
     if not recipient:
         return (
             "Ask the customer for the email address to send the confirmation to, then call "
             "this tool again with their email."
         )
-
-    subject, body = _confirmation_email_content(record)
     try:
-        email_sender.send_email(recipient, subject, body)
+        _send_confirmation_email_now(session_id, record, recipient, db)
     except Exception as exc:
         _log.warning("Confirmation email send failed: %s", exc)
         return (
@@ -849,6 +898,62 @@ def _handle_send_confirmation_email(tool_input: dict, session_id: str, db: Sessi
             "are saved and our team will follow up. Let the customer know."
         )
     return f"Confirmation email sent to {recipient} with the appointment details."
+
+
+def _last_assistant_offered_email(session_id: str, db: Session) -> bool:
+    """True if the most recent assistant turn asked about emailing a confirmation."""
+    row = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id, ChatMessage.role == "assistant")
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    return bool(row and re.search(r"email|confirmation", row.content or "", re.IGNORECASE))
+
+
+def _maybe_send_confirmation_email(
+    session_id: str, user_message: str, reply: str, captured: dict, db: Session
+) -> str:
+    """Deterministically send the confirmation email once the visitor supplies/approves it.
+
+    Small models often forget to call send_appointment_email and instead drift back into
+    scheduling. So after a booking exists, if the visitor's latest message gives an email
+    (or approves one already on file), we send here regardless of what the model did and
+    replace the reply with a clean confirmation — guaranteeing the email actually goes out
+    and the conversation wraps up.
+    """
+    if "booking" in captured:
+        return reply  # booking happened THIS turn; the bot will offer the email next
+    record = _latest_booking_record(session_id, db)
+    if not record or record.get("email_sent"):
+        return reply
+
+    email_in_msg = _EMAIL_RE.search(user_message or "")
+    if email_in_msg:
+        recipient = email_in_msg.group(0)
+    elif (
+        record.get("email")
+        and _AFFIRM_RE.search(user_message or "")
+        and _last_assistant_offered_email(session_id, db)
+    ):
+        recipient = record["email"]
+    else:
+        return reply  # nothing actionable this turn
+
+    try:
+        _send_confirmation_email_now(session_id, record, recipient, db)
+    except Exception as exc:
+        _log.warning("Auto confirmation email failed: %s", exc)
+        _update_booking_record(session_id, db, email=recipient)
+        return (
+            f"Your appointment is saved, but I couldn't email the confirmation to {recipient} "
+            "right now — our team will follow up to make sure you have the details. "
+            "Is there anything else I can help with?"
+        )
+    return (
+        f"✅ I've emailed your confirmation to {recipient} with the appointment details. "
+        "Is there anything else I can help with?"
+    )
 
 
 def _handle_tool(name: str, tool_input: dict, session_id: str, db: Session) -> str:
@@ -1352,6 +1457,7 @@ def get_chatbot_reply(session_id: str, user_message: str, db: Session, before_id
 
     reply = _ensure_availability_shown(reply, captured)
     reply = _ensure_booking_shown(reply, captured)
+    reply = _maybe_send_confirmation_email(session_id, user_message, reply, captured, db)
     db.add(ChatMessage(session_id=session_id, role="assistant", content=reply))
     db.commit()
     return reply

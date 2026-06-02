@@ -244,6 +244,97 @@ def test_send_email_send_failure_is_graceful(db: Session, monkeypatch) -> None:
     assert "couldn't send" in out.lower() or "could not send" in out.lower()
 
 
+# ── deterministic confirmation email (the small-model-drift fix) ───────────────
+
+
+def test_auto_send_when_visitor_provides_email_later(db: Session, monkeypatch) -> None:
+    # Booked without an email; visitor supplies it on a later turn.
+    _book(db, monkeypatch, email=None, session="auto1")
+    sent = {}
+    monkeypatch.setattr(
+        email_sender, "send_email", lambda to, subject, body: sent.update(to=to, body=body)
+    )
+    # Even if the model's reply drifts back to scheduling, we override with a clean confirm.
+    drifted = "Sure! What day works best for you — morning or afternoon?"
+    out = agent._maybe_send_confirmation_email(
+        "auto1", "my email is rob@example.com", drifted, {}, db
+    )
+    assert sent["to"] == "rob@example.com"
+    assert "emailed your confirmation" in out.lower()
+    assert "morning or afternoon" not in out  # the scheduling drift was replaced
+    # Marked sent so it won't fire again.
+    assert agent._latest_booking_record("auto1", db)["email_sent"] is True
+
+
+def test_auto_send_does_not_double_send(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email=None, session="auto2")
+    calls = {"n": 0}
+    monkeypatch.setattr(email_sender, "send_email", lambda *a, **k: calls.update(n=calls["n"] + 1))
+    agent._maybe_send_confirmation_email("auto2", "a@b.com", "x", {}, db)
+    # Second turn with another email must not re-send.
+    agent._maybe_send_confirmation_email("auto2", "c@d.com", "x", {}, db)
+    assert calls["n"] == 1
+
+
+def test_auto_send_affirmation_uses_on_file_email(db: Session, monkeypatch) -> None:
+    from app.models.chat import ChatMessage
+
+    _book(db, monkeypatch, email="onfile@example.com", session="auto3")
+    # Simulate the bot having just offered to email a confirmation.
+    db.add(
+        ChatMessage(
+            session_id="auto3",
+            role="assistant",
+            content="Would you like me to email you a confirmation?",
+        )
+    )
+    db.commit()
+    sent = {}
+    monkeypatch.setattr(email_sender, "send_email", lambda to, subject, body: sent.update(to=to))
+    out = agent._maybe_send_confirmation_email("auto3", "yes please", "ok", {}, db)
+    assert sent["to"] == "onfile@example.com"
+    assert "emailed your confirmation" in out.lower()
+
+
+def test_auto_send_skips_on_booking_turn(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email="jane@example.com", session="auto4")
+    called = {"n": 0}
+    monkeypatch.setattr(
+        email_sender, "send_email", lambda *a, **k: called.update(n=called["n"] + 1)
+    )
+    # captured has "booking" => the booking just happened this turn; don't email yet.
+    out = agent._maybe_send_confirmation_email(
+        "auto4", "jane@example.com", "reply", {"booking": "..."}, db
+    )
+    assert called["n"] == 0
+    assert out == "reply"
+
+
+def test_auto_send_ignores_unrelated_message(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email="onfile@example.com", session="auto5")
+    called = {"n": 0}
+    monkeypatch.setattr(
+        email_sender, "send_email", lambda *a, **k: called.update(n=called["n"] + 1)
+    )
+    # No email in message, no affirmation/offer context -> do nothing, leave reply alone.
+    out = agent._maybe_send_confirmation_email("auto5", "what products do you stock?", "r", {}, db)
+    assert called["n"] == 0
+    assert out == "r"
+
+
+def test_auto_send_failure_is_graceful(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email=None, session="auto6")
+
+    def _boom(*a, **k):
+        raise RuntimeError("SMTP down")
+
+    monkeypatch.setattr(email_sender, "send_email", _boom)
+    out = agent._maybe_send_confirmation_email("auto6", "me@example.com", "x", {}, db)
+    assert "couldn't email" in out.lower() or "could not email" in out.lower()
+    # Not marked sent, so a later retry can still go through.
+    assert agent._latest_booking_record("auto6", db).get("email_sent") is not True
+
+
 def test_ensure_booking_shown_prepends_when_missing() -> None:
     captured = {"booking": "✅ Your consultation is confirmed for Monday at 10:00 AM CDT."}
     # Reply with no time -> confirmation gets surfaced.
