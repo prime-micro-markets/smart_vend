@@ -44,6 +44,26 @@ def test_landing_is_indexable_with_seo_tags(client):
     assert '"@type": "LocalBusiness"' in html
 
 
+def test_landing_targets_local_keywords(client):
+    html = client.get("/").text
+    # Keyword + geo meta
+    assert 'name="keywords"' in html
+    assert 'name="geo.region" content="US-FL"' in html
+    # Core service + location terms are present somewhere on the page
+    for term in ("micro market", "smart cooler", "Panama City", "Bay County"):
+        assert term in html, f"missing keyword: {term}"
+    # Panama City Beach targeted in the structured data area list
+    assert "Panama City Beach" in html
+
+
+def test_owner_name_not_in_public_metadata(client):
+    # Personal name was intentionally removed from the public page.
+    html = client.get("/").text
+    assert "Troup" not in html
+    assert "Stephen" not in html
+    assert '"founder"' not in html
+
+
 def test_internal_app_is_noindex(client):
     # An authenticated internal page (require_user is stubbed in conftest).
     resp = client.get("/dashboard")
