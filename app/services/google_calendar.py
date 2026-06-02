@@ -178,13 +178,20 @@ def get_open_slots(
     return slots
 
 
-def slot_is_available(db: Session, start: datetime) -> bool:
+def slot_is_available(db: Session, start: datetime, *, on_grid: bool = True) -> bool:
     """True if ``start`` is a real, still-open consultation slot.
 
     Re-derives the rules from config and re-checks free/busy so a booking can be
     validated independently of whatever was shown earlier in the conversation —
-    the model can't book a time we never offered, a past time, or one that filled
-    up in the meantime.
+    the model can't book a past time, one outside business hours, or one that
+    filled up in the meantime.
+
+    ``on_grid`` (default True) additionally requires the start to land exactly on
+    the slot grid that begins at the day's opening hour — that's how the displayed
+    suggestions are generated. Pass ``on_grid=False`` to accept any in-window,
+    still-free time the customer asks for, even if it falls between the offered
+    slots (e.g. 9:45 when we listed times on the hour) — as long as the full
+    appointment fits inside business hours and doesn't overlap a busy block.
     """
     cfg = load_scheduling_config(db)
     start = start.astimezone(cfg.tz)
@@ -200,10 +207,11 @@ def slot_is_available(db: Session, start: datetime) -> bool:
     slot_end = start + timedelta(minutes=cfg.slot_minutes)
     if start < day_open or slot_end > day_close:
         return False
-    # Must land exactly on the slot grid that starts at the day's opening hour.
-    offset_min = (start - day_open).total_seconds() / 60
-    if offset_min % cfg.slot_minutes != 0:
-        return False
+    if on_grid:
+        # Must land exactly on the slot grid that starts at the day's opening hour.
+        offset_min = (start - day_open).total_seconds() / 60
+        if offset_min % cfg.slot_minutes != 0:
+            return False
     return not _overlaps(start, slot_end, _get_busy(db, start, slot_end))
 
 

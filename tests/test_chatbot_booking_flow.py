@@ -77,8 +77,32 @@ def test_match_open_slot_by_time_and_day(db: Session, monkeypatch) -> None:
 
 def test_match_open_slot_rejects_unoffered_time(db: Session, monkeypatch) -> None:
     monkeypatch.setattr(gcal, "_get_busy", lambda *a, **k: [])
-    # 3:17 isn't on the 30-min grid, so nothing matches.
+    # June 6 2026 is a Saturday — closed in the default Mon-Fri config — so even
+    # though the time parses, there's no open day to book it on.
     assert agent._match_open_slot(db, "June 6", "3:17 PM") is None
+
+
+def test_match_open_slot_accepts_in_window_time_off_grid(db: Session, monkeypatch) -> None:
+    monkeypatch.setattr(gcal, "_get_busy", lambda *a, **k: [])
+    # A time the customer picks between the offered 30-min slots, but still inside
+    # business hours and free, is honored (this used to be bounced as "not offered").
+    slot = _future(db, 10)
+    off_grid = slot.replace(minute=45)  # 10:45 — off the :00/:30 grid
+    matched = agent._match_open_slot(db, off_grid.strftime("%B %d"), "10:45 AM")
+    assert matched is not None
+    assert (matched.month, matched.day, matched.hour, matched.minute) == (
+        off_grid.month,
+        off_grid.day,
+        10,
+        45,
+    )
+
+
+def test_match_open_slot_still_rejects_outside_hours(db: Session, monkeypatch) -> None:
+    monkeypatch.setattr(gcal, "_get_busy", lambda *a, **k: [])
+    # An in-bounds weekday but a time after the 5pm close is still refused.
+    slot = _future(db, 10)
+    assert agent._match_open_slot(db, slot.strftime("%B %d"), "11:30 PM") is None
 
 
 # ── book_appointment handler ────────────────────────────────────────────────────
@@ -161,8 +185,8 @@ def test_book_rejects_time_not_offered(db: Session, monkeypatch) -> None:
 
     out = agent._handle_book_appointment(
         {
-            "date": "June 6",
-            "time": "3:17 PM",  # off-grid -> no matching slot
+            "date": "June 6",  # Saturday 2026 -> closed, no open slot to book
+            "time": "3:17 PM",
             "name": "Jane",
             "phone": "555",
             "location": "x",

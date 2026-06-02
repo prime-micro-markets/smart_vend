@@ -577,36 +577,70 @@ def _parse_month_day(text: str) -> tuple[int, int] | None:
     return None
 
 
+def _resolve_requested_datetime(
+    db: Session, month_day: tuple[int, int] | None, weekday: int | None, hour: int, minute: int
+):
+    """Build the exact datetime the customer named, anchored to a concrete date.
+
+    Walks the look-ahead window for the first day matching the named month/day or
+    weekday and stamps the requested clock time on it (in the configured tz).
+    Returns None if no date was named (we won't guess which day they meant) or no
+    matching day falls inside the window.
+    """
+    if month_day is None and weekday is None:
+        return None
+    cfg = gcal_svc.load_scheduling_config(db)
+    now = datetime.now(tz=cfg.tz)
+    for offset in range(cfg.lookahead_days + 1):
+        day = (now + timedelta(days=offset)).date()
+        if month_day and (day.month, day.day) != month_day:
+            continue
+        if weekday is not None and day.weekday() != weekday:
+            continue
+        return datetime(day.year, day.month, day.day, hour, minute, tzinfo=cfg.tz)
+    return None
+
+
 def _match_open_slot(db: Session, date_text: str, time_text: str):
     """Find the real open slot matching the customer's stated day + time.
 
     We never trust a model-built timestamp: we re-fetch the actual open slots and
     match on (hour, minute) plus the date or weekday the customer named. This is
     robust to small models that fumble ISO/timezone math, and guarantees we only
-    book a slot that is genuinely open right now.
+    book a time that is genuinely open right now.
+
+    Preference order:
+      1. An exact open *grid* slot (one of the times we'd display) on the named day.
+      2. Failing that, the exact time the customer asked for if it's still a valid,
+         free in-window time — so a request like "9:45?" between offered slots is
+         honored instead of bounced as "not on the list" (it must still fit inside
+         business hours and not overlap a busy block; off-grid is allowed here).
     """
     clock = _parse_clock(time_text)
     if clock is None:
         return None
     hour, minute = clock
-    # Generous pool across the whole look-ahead window (ignore the display cap).
-    slots = gcal_svc.get_open_slots(db, max_slots=10_000)
-    candidates = [s for s in slots if s.hour == hour and s.minute == minute]
-    if not candidates:
-        return None
-
     month_day = _parse_month_day(date_text)
     weekday = _parse_weekday(date_text)
+
+    # 1) Prefer an exact open grid slot matching the named date/day.
+    slots = gcal_svc.get_open_slots(db, max_slots=10_000)
+    candidates = [s for s in slots if s.hour == hour and s.minute == minute]
     for s in candidates:
         if month_day and (s.month, s.day) == month_day:
             return s
     for s in candidates:
         if weekday is not None and s.weekday() == weekday:
             return s
-    # A date/day was named but nothing matched it — don't guess.
-    if month_day or weekday is not None:
-        return None
-    return candidates[0]
+    if month_day is None and weekday is None and candidates:
+        return candidates[0]
+
+    # 2) No grid slot, but if the customer named a specific day + a real, still-free
+    #    in-window time, honor that exact time even though it's between offered slots.
+    requested = _resolve_requested_datetime(db, month_day, weekday, hour, minute)
+    if requested is not None and gcal_svc.slot_is_available(db, requested, on_grid=False):
+        return requested
+    return None
 
 
 def _handle_check_availability(tool_input: dict, db: Session) -> str:
@@ -835,9 +869,13 @@ _AFFIRM_RE = re.compile(
 def _send_confirmation_email_now(
     session_id: str, record: dict, recipient: str, db: Session
 ) -> bool:
-    """Send the confirmation and mark the record so it can't double-send. Raises on send failure."""
+    """Send the confirmation and mark the record so it can't double-send. Raises on send failure.
+
+    Uses the Gmail-API-first sender so the email still goes out on hosts that
+    block outbound SMTP (the cause of confirmations silently never arriving).
+    """
     subject, body = _confirmation_email_content({**record, "email": recipient})
-    email_sender.send_email(recipient, subject, body)
+    email_sender.send_appointment_confirmation(db, recipient, subject, body)
     _update_booking_record(session_id, db, email=recipient, email_sent=True)
     return True
 
