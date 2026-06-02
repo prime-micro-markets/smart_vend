@@ -12,7 +12,26 @@ from sqlalchemy.orm import Session
 
 from app.models.sales import Prospect
 from app.services import cs_chatbot_agent as agent
+from app.services import email_sender
 from app.services import google_calendar as gcal
+
+
+def _book(db, monkeypatch, *, email=None, session="sess_email"):
+    """Run a successful booking (calendar stubbed) and return the chosen slot."""
+    monkeypatch.setattr(gcal, "_get_busy", lambda *a, **k: [])
+    monkeypatch.setattr(gcal, "create_event", lambda *a, **k: "https://cal/evt")
+    slot = _future(db, 10)
+    payload = {
+        "date": slot.strftime("%B %d"),
+        "time": "10:00 AM",
+        "name": "Jane Doe",
+        "phone": "555-111-2222",
+        "location": "100 Main St",
+    }
+    if email:
+        payload["email"] = email
+    agent._handle_book_appointment(payload, session, db)
+    return slot
 
 
 def _future(db: Session, weekday_offset_hour: int = 10):
@@ -172,6 +191,57 @@ def test_check_availability_passes_filters(db: Session, monkeypatch) -> None:
 
 
 # ── ensure-shown guards ────────────────────────────────────────────────────────
+
+
+def test_send_email_uses_booking_email(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email="jane@example.com", session="s_em1")
+    sent = {}
+    monkeypatch.setattr(
+        email_sender,
+        "send_email",
+        lambda to, subject, body: sent.update(to=to, subject=subject, body=body),
+    )
+    out = agent._handle_send_confirmation_email({}, "s_em1", db)
+    assert "jane@example.com" in out
+    assert sent["to"] == "jane@example.com"
+    assert "confirmed" in sent["body"].lower()
+    assert "100 Main St" in sent["body"]  # appointment details included
+
+
+def test_send_email_asks_for_address_when_missing(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email=None, session="s_em2")  # booked without email
+    called = {"n": 0}
+    monkeypatch.setattr(
+        email_sender, "send_email", lambda *a, **k: called.update(n=called["n"] + 1)
+    )
+    out = agent._handle_send_confirmation_email({}, "s_em2", db)
+    assert "email" in out.lower()
+    assert called["n"] == 0  # nothing sent without a recipient
+
+
+def test_send_email_accepts_late_provided_address(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email=None, session="s_em3")
+    sent = {}
+    monkeypatch.setattr(email_sender, "send_email", lambda to, subject, body: sent.update(to=to))
+    out = agent._handle_send_confirmation_email({"email": "later@example.com"}, "s_em3", db)
+    assert sent["to"] == "later@example.com"
+    assert "later@example.com" in out
+
+
+def test_send_email_without_booking(db: Session) -> None:
+    out = agent._handle_send_confirmation_email({"email": "x@example.com"}, "no_booking", db)
+    assert "no appointment" in out.lower()
+
+
+def test_send_email_send_failure_is_graceful(db: Session, monkeypatch) -> None:
+    _book(db, monkeypatch, email="jane@example.com", session="s_em4")
+
+    def _boom(*a, **k):
+        raise RuntimeError("SMTP down")
+
+    monkeypatch.setattr(email_sender, "send_email", _boom)
+    out = agent._handle_send_confirmation_email({}, "s_em4", db)
+    assert "couldn't send" in out.lower() or "could not send" in out.lower()
 
 
 def test_ensure_booking_shown_prepends_when_missing() -> None:

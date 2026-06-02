@@ -14,9 +14,14 @@ from app.models.chat import ChatMessage
 from app.models.cs_governance import CSGovernanceRule
 from app.models.equipment import EquipmentUnit
 from app.models.settings import AppSetting
+from app.services import email_sender
 from app.services import google_calendar as gcal_svc
 
 _log = logging.getLogger(__name__)
+
+# tool_name marker for the per-session appointment record (a role="tool" ChatMessage)
+# the send_appointment_email tool reads to build a confirmation from the real booking.
+_BOOKING_RECORD_TOOL = "appointment_booked"
 
 _MAX_TOOL_CALLS = 5
 _MAX_HISTORY = 10
@@ -214,6 +219,9 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
             "  4. Read the chosen time and their details back to confirm, then call "
             "book_appointment with the slot's date and time exactly as you showed them, plus "
             "name, phone, and location. Only call book_appointment after they've confirmed.\n"
+            "  5. After a booking succeeds, ask the visitor if they'd like an email confirming "
+            "the appointment. If yes, make sure you have their email (ask for it if you don't), "
+            "then call send_appointment_email to send them the details.\n"
             "  Never invent times — only offer what check_availability returns. Never claim a "
             "booking is made unless book_appointment succeeded."
         )
@@ -373,6 +381,38 @@ _TOOL_BOOK_OAI = {
         "name": "book_appointment",
         "description": _TOOL_BOOK["description"],
         "parameters": _TOOL_BOOK["input_schema"],
+    },
+}
+
+_TOOL_SEND_EMAIL = {
+    "name": "send_appointment_email",
+    "description": (
+        "Email the visitor a written confirmation of the consultation just booked via "
+        "book_appointment. Call this ONLY after a successful booking and after the visitor "
+        "says yes to receiving an email. If their email wasn't collected during booking, ask "
+        "for it and pass it as 'email'."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "email": {
+                "type": "string",
+                "description": (
+                    "Recipient email. Optional if it was already given during booking; "
+                    "required if not."
+                ),
+            },
+        },
+        "required": [],
+    },
+}
+
+_TOOL_SEND_EMAIL_OAI = {
+    "type": "function",
+    "function": {
+        "name": "send_appointment_email",
+        "description": _TOOL_SEND_EMAIL["description"],
+        "parameters": _TOOL_SEND_EMAIL["input_schema"],
     },
 }
 
@@ -653,6 +693,31 @@ def _handle_book_appointment(tool_input: dict, session_id: str, db: Session) -> 
     except Exception:
         _log.exception("Failed to save booking lead")
 
+    # Stash the appointment for this session so a follow-up "email me the details"
+    # builds the confirmation from the real booking rather than model-recalled text.
+    try:
+        db.add(
+            ChatMessage(
+                session_id=session_id,
+                role="tool",
+                tool_name=_BOOKING_RECORD_TOOL,
+                content=json.dumps(
+                    {
+                        "name": name,
+                        "email": email,
+                        "phone": phone,
+                        "location": location,
+                        "slot_label": label,
+                        "start_iso": slot.isoformat(),
+                        "booked": booked,
+                    }
+                ),
+            )
+        )
+        db.commit()
+    except Exception:
+        _log.exception("Failed to record appointment for session %s", session_id[:8])
+
     if booked:
         invite = " A calendar invite is on its way to your email." if email else ""
         return (
@@ -709,9 +774,89 @@ def _save_booking_lead(
     db.commit()
 
 
+def _latest_booking_record(session_id: str, db: Session) -> dict | None:
+    row = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "tool",
+            ChatMessage.tool_name == _BOOKING_RECORD_TOOL,
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    if not row:
+        return None
+    try:
+        return json.loads(row.content)
+    except (ValueError, TypeError):
+        return None
+
+
+def _confirmation_email_content(record: dict) -> tuple[str, str]:
+    name = (record.get("name") or "there").strip()
+    slot = record.get("slot_label") or "your selected time"
+    location = (record.get("location") or "").strip()
+    phone = (record.get("phone") or "").strip()
+
+    if record.get("booked"):
+        lead = f"Your consultation with Prime Micro Markets is confirmed for {slot}."
+    else:
+        lead = (
+            f"We've received your requested consultation time ({slot}) and a team member "
+            "will confirm it shortly."
+        )
+
+    lines = [f"Hi {name},", "", lead, "", "Details:", f"  When: {slot}"]
+    if location:
+        lines.append(f"  Where: {location}")
+    if phone:
+        lines.append(f"  Your contact number: {phone}")
+    lines += [
+        "",
+        "During the visit our team will evaluate your location for a smart cooler or "
+        "micro market — installed at no cost to your business.",
+        "",
+        "Need to make a change? Just reply to this email or call us.",
+        "",
+        "— Prime Micro Markets",
+        "primemicromarkets@gmail.com",
+    ]
+    return f"Your Prime Micro Markets consultation — {slot}", "\n".join(lines)
+
+
+def _handle_send_confirmation_email(tool_input: dict, session_id: str, db: Session) -> str:
+    record = _latest_booking_record(session_id, db)
+    if not record:
+        return (
+            "No appointment has been booked in this conversation yet, so there's nothing "
+            "to email. Book the appointment first."
+        )
+    recipient = (tool_input.get("email") or "").strip() or (record.get("email") or "").strip()
+    if not recipient:
+        return (
+            "Ask the customer for the email address to send the confirmation to, then call "
+            "this tool again with their email."
+        )
+
+    subject, body = _confirmation_email_content(record)
+    try:
+        email_sender.send_email(recipient, subject, body)
+    except Exception as exc:
+        _log.warning("Confirmation email send failed: %s", exc)
+        return (
+            "I couldn't send the confirmation email just now, but the appointment details "
+            "are saved and our team will follow up. Let the customer know."
+        )
+    return f"Confirmation email sent to {recipient} with the appointment details."
+
+
 def _handle_tool(name: str, tool_input: dict, session_id: str, db: Session) -> str:
     if name == "check_availability":
         return _handle_check_availability(tool_input, db)
+
+    if name == "send_appointment_email":
+        return _handle_send_confirmation_email(tool_input, session_id, db)
 
     if name == "book_appointment":
         return _handle_book_appointment(tool_input, session_id, db)
@@ -812,7 +957,13 @@ def _run_anthropic(
             model=model,
             max_tokens=_MAX_TOKENS_CHAT,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            tools=[_TOOL_AVAILABILITY, _TOOL_BOOK, _TOOL_ESCALATE, _TOOL_CAPTURE_LEAD],
+            tools=[
+                _TOOL_AVAILABILITY,
+                _TOOL_BOOK,
+                _TOOL_SEND_EMAIL,
+                _TOOL_ESCALATE,
+                _TOOL_CAPTURE_LEAD,
+            ],
             messages=messages,
         )
         messages.append({"role": "assistant", "content": response.content})
@@ -897,6 +1048,7 @@ def _run_openai_compat(
             tools=[
                 _TOOL_AVAILABILITY_OAI,
                 _TOOL_BOOK_OAI,
+                _TOOL_SEND_EMAIL_OAI,
                 _TOOL_ESCALATE_OAI,
                 _TOOL_CAPTURE_LEAD_OAI,
             ],
