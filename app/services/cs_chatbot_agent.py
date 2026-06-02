@@ -20,7 +20,7 @@ _log = logging.getLogger(__name__)
 
 _MAX_TOOL_CALLS = 5
 _MAX_HISTORY = 10
-_MAX_TOKENS_CHAT = 380      # keeps responses concise; cuts generation time roughly in half vs 768
+_MAX_TOKENS_CHAT = 380  # keeps responses concise; cuts generation time roughly in half vs 768
 _RATE_LIMIT_PER_HOUR: dict[str, int] = {
     "anthropic": 20,
     "groq": 20,
@@ -173,12 +173,14 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
         .all()
     )
 
+    today = datetime.now(tz=gcal_svc.load_scheduling_config(db).tz)
     base = (
         f"You are a helpful customer service assistant for Prime Micro Markets, "
         f"a veteran-owned smart cooler vending company serving "
         f"Bay County, FL (Panama City area).\n\n"
         f"{settings.company_blurb}\n\n"
         f"You help answer questions from potential and existing host location partners.\n\n"
+        f"Today's date is {today.strftime('%A, %B')} {today.day}, {today.year}.\n\n"
     )
 
     if rules:
@@ -200,14 +202,24 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
 
     if include_tools:
         scheduling_note = (
-            "When asked about scheduling or booking a meeting, use the check_availability "
-            "tool to fetch real-time open consultation slots from the company calendar, "
-            "then share them with the customer."
+            "SCHEDULING A CONSULTATION — follow these steps in order:\n"
+            "  1. FIRST ask the customer their preference: which day works best, and do they "
+            "prefer morning or afternoon? Ask before listing any times.\n"
+            "  2. Call check_availability with their stated 'day' and/or 'period' to fetch "
+            "matching open slots, and show them as a short bulleted list. If they have no "
+            "preference, call it with no filters. Help them narrow to one specific time.\n"
+            "  3. Once they confirm a specific time, collect the details needed to book: their "
+            "full name, phone number, and the location address for the proposed unit (email is "
+            "optional but lets us send a calendar invite). Ask for anything still missing.\n"
+            "  4. Read the chosen time and their details back to confirm, then call "
+            "book_appointment with the slot's date and time exactly as you showed them, plus "
+            "name, phone, and location. Only call book_appointment after they've confirmed.\n"
+            "  Never invent times — only offer what check_availability returns. Never claim a "
+            "booking is made unless book_appointment succeeded."
         )
     elif settings.google_booking_url:
         scheduling_note = (
-            "When asked about scheduling, direct them to book here: "
-            f"{settings.google_booking_url}"
+            f"When asked about scheduling, direct them to book here: {settings.google_booking_url}"
         )
     else:
         scheduling_note = (
@@ -254,19 +266,62 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
 _TOOL_AVAILABILITY = {
     "name": "check_availability",
     "description": (
-        "Check the company calendar and return the next open consultation time slots. "
-        "Use this when a customer asks about scheduling a call, demo, or site visit, "
-        "or asks what times are available."
+        "Check the company calendar and return open consultation time slots. Use this to "
+        "narrow down a time AFTER asking the customer their preference. Pass the customer's "
+        "stated preference as filters so the options match what they asked for."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "reason": {
+            "day": {
                 "type": "string",
-                "description": "Brief reason the customer wants to schedule (optional)",
-            }
+                "description": (
+                    "Optional day-of-week preference, e.g. 'Monday' or 'Saturday'. "
+                    "Omit if the customer has no day preference."
+                ),
+            },
+            "period": {
+                "type": "string",
+                "enum": ["morning", "afternoon"],
+                "description": "Optional time-of-day preference. Omit if no preference.",
+            },
         },
         "required": [],
+    },
+}
+
+_TOOL_BOOK = {
+    "name": "book_appointment",
+    "description": (
+        "Book a CONFIRMED consultation on the company calendar. Call this ONLY after: "
+        "(1) the customer picked a specific time you offered via check_availability, AND "
+        "(2) they gave their full name, phone number, and the location address for the "
+        "proposed unit. Pass the chosen slot's date and time exactly as you showed it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "date": {
+                "type": "string",
+                "description": "The chosen slot's date as shown, e.g. 'June 6' or '2026-06-06'.",
+            },
+            "time": {
+                "type": "string",
+                "description": "The chosen slot's start time as shown, e.g. '10:00 AM'.",
+            },
+            "name": {"type": "string", "description": "Customer's full name"},
+            "phone": {"type": "string", "description": "Customer's phone number"},
+            "location": {
+                "type": "string",
+                "description": "Address of the location for the proposed unit",
+            },
+            "email": {
+                "type": "string",
+                "description": "Customer's email (optional — used to send a calendar invite)",
+            },
+            "notes": {"type": "string", "description": "Anything else relevant (optional)"},
+        },
+        "required": ["date", "time", "name", "phone", "location"],
     },
 }
 
@@ -309,6 +364,15 @@ _TOOL_ESCALATE_OAI = {
         "name": "request_human_followup",
         "description": _TOOL_ESCALATE["description"],
         "parameters": _TOOL_ESCALATE["input_schema"],
+    },
+}
+
+_TOOL_BOOK_OAI = {
+    "type": "function",
+    "function": {
+        "name": "book_appointment",
+        "description": _TOOL_BOOK["description"],
+        "parameters": _TOOL_BOOK["input_schema"],
     },
 }
 
@@ -395,14 +459,262 @@ def _handle_capture_lead(tool_input: dict, session_id: str, db: Session) -> str:
     )
 
 
+_WEEKDAY_NAMES = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+_MONTH_NAMES = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+_TIME_RE = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?", re.IGNORECASE)
+
+
+def _parse_weekday(text: str) -> int | None:
+    text = (text or "").lower()
+    for name, n in _WEEKDAY_NAMES.items():
+        if name in text:
+            return n
+    return None
+
+
+def _parse_period(text: str) -> str | None:
+    text = (text or "").strip().lower()
+    return text if text in ("morning", "afternoon") else None
+
+
+def _parse_clock(text: str) -> tuple[int, int] | None:
+    """'10:00 AM' / '2pm' / '14:00' -> (hour, minute) in 24h, or None."""
+    m = _TIME_RE.search(text or "")
+    if not m:
+        return None
+    hour = int(m.group(1))
+    minute = int(m.group(2) or 0)
+    ampm = (m.group(3) or "").replace(".", "").lower()
+    if ampm == "pm" and hour != 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
+def _parse_month_day(text: str) -> tuple[int, int] | None:
+    """'June 6' / '6 June' / '2026-06-06' / '6/6' -> (month, day), or None."""
+    text = (text or "").strip().lower()
+    iso = re.search(r"\b\d{4}-(\d{1,2})-(\d{1,2})\b", text)
+    if iso:
+        return int(iso.group(1)), int(iso.group(2))
+    slash = re.search(r"\b(\d{1,2})/(\d{1,2})\b", text)
+    if slash:
+        return int(slash.group(1)), int(slash.group(2))
+    for name, mon in _MONTH_NAMES.items():
+        if name in text:
+            day_m = re.search(r"\b(\d{1,2})\b", text)
+            if day_m:
+                return mon, int(day_m.group(1))
+    return None
+
+
+def _match_open_slot(db: Session, date_text: str, time_text: str):
+    """Find the real open slot matching the customer's stated day + time.
+
+    We never trust a model-built timestamp: we re-fetch the actual open slots and
+    match on (hour, minute) plus the date or weekday the customer named. This is
+    robust to small models that fumble ISO/timezone math, and guarantees we only
+    book a slot that is genuinely open right now.
+    """
+    clock = _parse_clock(time_text)
+    if clock is None:
+        return None
+    hour, minute = clock
+    # Generous pool across the whole look-ahead window (ignore the display cap).
+    slots = gcal_svc.get_open_slots(db, max_slots=10_000)
+    candidates = [s for s in slots if s.hour == hour and s.minute == minute]
+    if not candidates:
+        return None
+
+    month_day = _parse_month_day(date_text)
+    weekday = _parse_weekday(date_text)
+    for s in candidates:
+        if month_day and (s.month, s.day) == month_day:
+            return s
+    for s in candidates:
+        if weekday is not None and s.weekday() == weekday:
+            return s
+    # A date/day was named but nothing matched it — don't guess.
+    if month_day or weekday is not None:
+        return None
+    return candidates[0]
+
+
+def _handle_check_availability(tool_input: dict, db: Session) -> str:
+    try:
+        return gcal_svc.get_availability_message(
+            db,
+            weekday=_parse_weekday(tool_input.get("day", "")),
+            period=_parse_period(tool_input.get("period", "")),
+        )
+    except Exception as exc:
+        if settings.google_booking_url:
+            return f"Book directly here: {settings.google_booking_url}"
+        return (
+            f"Unable to fetch availability ({exc}). "
+            "Please email primemicromarkets@gmail.com to schedule."
+        )
+
+
+def _handle_book_appointment(tool_input: dict, session_id: str, db: Session) -> str:
+    name = (tool_input.get("name") or "").strip()
+    phone = (tool_input.get("phone") or "").strip()
+    location = (tool_input.get("location") or "").strip()
+    email = (tool_input.get("email") or "").strip() or None
+    notes = (tool_input.get("notes") or "").strip() or None
+    date_text = (tool_input.get("date") or "").strip()
+    time_text = (tool_input.get("time") or "").strip()
+
+    missing = [
+        label
+        for label, val in (
+            ("name", name),
+            ("phone", phone),
+            ("location", location),
+            ("a date", date_text),
+            ("a time", time_text),
+        )
+        if not val
+    ]
+    if missing:
+        return (
+            "Before booking, ask the customer for the missing details: "
+            + ", ".join(missing)
+            + ". Do not book until you have a chosen time, name, phone, and location."
+        )
+
+    try:
+        slot = _match_open_slot(db, date_text, time_text)
+    except Exception as exc:
+        _log.warning("Booking slot lookup failed: %s", exc)
+        slot = None
+    if slot is None:
+        return (
+            "That time isn't on the open list. Call check_availability again and offer the "
+            "customer one of the exact times it returns, then book the one they choose."
+        )
+
+    label = gcal_svc._format_label(slot)
+    summary = f"Prime Micro Markets consultation — {name}"
+    desc_lines = [
+        "Booked via the website chatbot.",
+        f"Name: {name}",
+        f"Phone: {phone}",
+    ]
+    if email:
+        desc_lines.append(f"Email: {email}")
+    desc_lines.append(f"Location: {location}")
+    if notes:
+        desc_lines.append(f"Notes: {notes}")
+    desc_lines.append(f"Chat session: {session_id[:8]}")
+    description = "\n".join(desc_lines)
+
+    booked = False
+    try:
+        gcal_svc.create_event(
+            db, start=slot, summary=summary, description=description, attendee_email=email
+        )
+        booked = True
+    except gcal_svc.CalendarWriteError as exc:
+        _log.warning(
+            "Calendar booking unavailable (needs_reconnect=%s): %s",
+            getattr(exc, "needs_reconnect", False),
+            exc,
+        )
+    except Exception as exc:
+        _log.warning("Calendar booking failed: %s", exc)
+
+    try:
+        _save_booking_lead(name, email, phone, location, notes, label, booked, session_id, db)
+    except Exception:
+        _log.exception("Failed to save booking lead")
+
+    if booked:
+        invite = " A calendar invite is on its way to your email." if email else ""
+        return (
+            f"{_BOOKING_CONFIRMED_MARKER} for {label}.{invite} "
+            f"We have your details on file ({name}, {phone}) — we look forward to meeting you!"
+        )
+    return (
+        f"Thanks {name}! I've recorded your requested time ({label}) along with your details, "
+        "and a team member will confirm shortly by phone or email."
+    )
+
+
+def _save_booking_lead(
+    name: str,
+    email: str | None,
+    phone: str | None,
+    location: str | None,
+    notes: str | None,
+    slot_label: str,
+    booked: bool,
+    session_id: str,
+    db: Session,
+) -> None:
+    from app.models.sales import OutreachLog, Prospect
+
+    status = "Booked consultation" if booked else "Requested consultation (pending confirm)"
+    note_parts = [f"{status}: {slot_label}"]
+    if notes:
+        note_parts.append(f"Notes: {notes}")
+    note_parts.append(f"Chatbot session: {session_id[:8]}")
+
+    prospect = Prospect(
+        company_name=(location or f"Consultation — {name}")[:200],
+        contact_name=name[:150],
+        contact_email=email[:200] if email else None,
+        contact_phone=phone[:30] if phone else None,
+        address=location[:300] if location else None,
+        source="AI Chatbot — Booked Consultation",
+        notes=" | ".join(note_parts),
+        pipeline_stage="qualified" if booked else "lead",
+    )
+    db.add(prospect)
+    db.flush()
+    db.add(
+        OutreachLog(
+            prospect_id=prospect.id,
+            channel="chatbot",
+            direction="inbound",
+            contacted_at=datetime.now(),
+            subject_or_summary=f"{status} via AI Chatbot",
+            notes=f"{status} for {slot_label}. Session: {session_id[:8]}.",
+        )
+    )
+    db.commit()
+
+
 def _handle_tool(name: str, tool_input: dict, session_id: str, db: Session) -> str:
     if name == "check_availability":
-        try:
-            return gcal_svc.get_availability_message(db)
-        except Exception as exc:
-            if settings.google_booking_url:
-                return f"Book directly here: {settings.google_booking_url}"
-            return f"Unable to fetch availability ({exc}). Please email primemicromarkets@gmail.com to schedule."
+        return _handle_check_availability(tool_input, db)
+
+    if name == "book_appointment":
+        return _handle_book_appointment(tool_input, session_id, db)
 
     if name == "capture_lead":
         return _handle_capture_lead(tool_input, session_id, db)
@@ -483,7 +795,11 @@ def _load_history(session_id: str, db: Session) -> list[dict]:
 
 
 def _run_anthropic(
-    messages: list[dict], system: str, model: str, session_id: str, db: Session,
+    messages: list[dict],
+    system: str,
+    model: str,
+    session_id: str,
+    db: Session,
     captured: dict | None = None,
 ) -> str:
     import anthropic  # type: ignore[import-untyped]
@@ -496,7 +812,7 @@ def _run_anthropic(
             model=model,
             max_tokens=_MAX_TOKENS_CHAT,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            tools=[_TOOL_AVAILABILITY, _TOOL_ESCALATE, _TOOL_CAPTURE_LEAD],
+            tools=[_TOOL_AVAILABILITY, _TOOL_BOOK, _TOOL_ESCALATE, _TOOL_CAPTURE_LEAD],
             messages=messages,
         )
         messages.append({"role": "assistant", "content": response.content})
@@ -511,6 +827,8 @@ def _run_anthropic(
                 result = _handle_tool(block.name, block.input, session_id, db)
                 if captured is not None and block.name == "check_availability":
                     captured["availability"] = result
+                if captured is not None and block.name == "book_appointment":
+                    captured["booking"] = result
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -576,7 +894,12 @@ def _run_openai_compat(
         response = client.chat.completions.create(
             model=model,
             messages=oai_messages,
-            tools=[_TOOL_AVAILABILITY_OAI, _TOOL_ESCALATE_OAI, _TOOL_CAPTURE_LEAD_OAI],
+            tools=[
+                _TOOL_AVAILABILITY_OAI,
+                _TOOL_BOOK_OAI,
+                _TOOL_ESCALATE_OAI,
+                _TOOL_CAPTURE_LEAD_OAI,
+            ],
             tool_choice="auto",
             max_tokens=max_tokens,
         )
@@ -598,6 +921,8 @@ def _run_openai_compat(
             result = _handle_tool(tc.function.name, tool_input, session_id, db)
             if captured is not None and tc.function.name == "check_availability":
                 captured["availability"] = result
+            if captured is not None and tc.function.name == "book_appointment":
+                captured["booking"] = result
             oai_messages.append(
                 {
                     "role": "tool",
@@ -613,7 +938,11 @@ def _run_openai_compat(
 
 
 def _run_gemini(
-    messages: list[dict], system: str, model: str, session_id: str, db: Session,
+    messages: list[dict],
+    system: str,
+    model: str,
+    session_id: str,
+    db: Session,
     captured: dict | None = None,
 ) -> str:
     # Use Gemini's OpenAI-compatible endpoint
@@ -632,7 +961,7 @@ def _run_gemini(
 # ── Ollama lead extraction ────────────────────────────────────────────────────
 
 _CONTACT_MARKER = "[CONTACT_NOTED]"
-_CONTACT_MARKER_RE = re.compile(r'\*{0,2}\[CONTACT_NOTED\]\*{0,2}', re.IGNORECASE)
+_CONTACT_MARKER_RE = re.compile(r"\*{0,2}\[CONTACT_NOTED\]\*{0,2}", re.IGNORECASE)
 
 
 def _save_lead_from_conversation(session_id: str, db: Session) -> None:
@@ -650,12 +979,11 @@ def _save_lead_from_conversation(session_id: str, db: Session) -> None:
         .all()
     )
     conversation = "\n".join(
-        f"{'Customer' if m.role == 'user' else 'Assistant'}: {m.content}"
-        for m in msgs
+        f"{'Customer' if m.role == 'user' else 'Assistant'}: {m.content}" for m in msgs
     )
 
-    email_m = re.search(r'\b[\w.+-]+@[\w-]+\.[\w.]+\b', conversation)
-    phone_m = re.search(r'\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', conversation)
+    email_m = re.search(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b", conversation)
+    phone_m = re.search(r"\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", conversation)
     email = email_m.group(0) if email_m else None
     phone = phone_m.group(0) if phone_m else None
 
@@ -706,6 +1034,8 @@ def _error_message(exc: Exception) -> str:
 
 # Marker that google_calendar.format_slots_for_chat prefixes to a real slot list.
 _AVAIL_SLOTS_MARKER = "Here are the next available consultation times"
+# Customer-facing prefix on a successful booking confirmation.
+_BOOKING_CONFIRMED_MARKER = "✅ Your consultation is confirmed"
 # A clock time like "10:00 AM" — used to tell if the model already wrote out the
 # slot times itself (timezone-agnostic, so it survives a configured-tz change).
 _CLOCK_TIME_RE = re.compile(r"\d{1,2}:\d{2}\s*(?:AM|PM)", re.IGNORECASE)
@@ -727,6 +1057,21 @@ def _ensure_availability_shown(reply: str, captured: dict) -> str:
     return f"{avail}\n\n{reply}".strip() if reply.strip() else avail
 
 
+def _ensure_booking_shown(reply: str, captured: dict) -> str:
+    """Guarantee a booking confirmation reaches the customer.
+
+    If book_appointment ran, the tool result is already a clean customer-facing
+    line. If the model's own reply doesn't restate the time, use/prepend the
+    confirmation so the customer always gets a concrete outcome.
+    """
+    booking = captured.get("booking", "")
+    if not booking:
+        return reply
+    if _CLOCK_TIME_RE.search(reply):
+        return reply  # model already restated the booked time
+    return f"{booking}\n\n{reply}".strip() if reply.strip() else booking
+
+
 def _dispatch(
     provider: str,
     model: str,
@@ -746,20 +1091,28 @@ def _dispatch(
         if not settings.groq_api_key:
             raise RuntimeError("GROQ_API_KEY not configured.")
         return _run_openai_compat(
-            messages, system, model,
+            messages,
+            system,
+            model,
             api_key=settings.groq_api_key,
             base_url="https://api.groq.com/openai/v1",
-            session_id=session_id, db=db, captured=captured,
+            session_id=session_id,
+            db=db,
+            captured=captured,
         )
 
     if provider == "openai":
         if not settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY not configured.")
         return _run_openai_compat(
-            messages, system, model,
+            messages,
+            system,
+            model,
             api_key=settings.openai_api_key,
             base_url=None,
-            session_id=session_id, db=db, captured=captured,
+            session_id=session_id,
+            db=db,
+            captured=captured,
         )
 
     if provider == "gemini":
@@ -769,7 +1122,9 @@ def _dispatch(
 
     if provider == "ollama":
         reply = _run_openai_compat(
-            messages, system, model,
+            messages,
+            system,
+            model,
             api_key="ollama",
             base_url=settings.ollama_base_url,
             session_id=session_id,
@@ -827,7 +1182,8 @@ def get_chatbot_reply(session_id: str, user_message: str, db: Session, before_id
         if provider != "anthropic" and settings.anthropic_api_key:
             _log.warning(
                 "Chatbot primary provider %r failed (%s); falling back to Claude Haiku.",
-                provider, primary_exc,
+                provider,
+                primary_exc,
             )
             try:
                 reply = _run_anthropic(
@@ -837,11 +1193,13 @@ def get_chatbot_reply(session_id: str, user_message: str, db: Session, before_id
                 _log.error("Chatbot Anthropic fallback also failed: %s", fb_exc)
                 reply = _error_message(primary_exc)
         else:
-            _log.error("Chatbot provider %r failed with no fallback available: %s",
-                       provider, primary_exc)
+            _log.error(
+                "Chatbot provider %r failed with no fallback available: %s", provider, primary_exc
+            )
             reply = _error_message(primary_exc)
 
     reply = _ensure_availability_shown(reply, captured)
+    reply = _ensure_booking_shown(reply, captured)
     db.add(ChatMessage(session_id=session_id, role="assistant", content=reply))
     db.commit()
     return reply

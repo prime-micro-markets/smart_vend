@@ -7,6 +7,29 @@
       from your connected Google Calendar's free/busy and filtered to these hours.
     </p>
 
+    {# Booking status: the chatbot can only create calendar events with the calendar.events scope. #}
+    {% if booking_enabled %}
+    <div class="alert alert-success py-2 small d-flex align-items-center gap-2 mb-3">
+      <i class="bi bi-calendar-check"></i>
+      <span><strong>Calendar booking is on.</strong> The chatbot can confirm appointments and
+      add them to your Google Calendar with the visitor's contact details.</span>
+    </div>
+    {% else %}
+    <div class="alert alert-warning py-2 small d-flex align-items-center gap-2 mb-3">
+      <i class="bi bi-exclamation-triangle"></i>
+      <span>
+        <strong>Calendar booking is not enabled yet.</strong>
+        {% if gmail_connected %}
+        Booking needs the new calendar permission —
+        {% else %}
+        Connect Google to let the chatbot book appointments —
+        {% endif %}
+        <a href="/customer-service/gmail/connect" class="alert-link">reconnect Google</a>.
+        Until then the chatbot still collects the visitor's preferred time and details for the team to confirm.
+      </span>
+    </div>
+    {% endif %}
+
     <form hx-post="/customer-service/availability"
           hx-target="#availability-result"
           hx-swap="innerHTML">

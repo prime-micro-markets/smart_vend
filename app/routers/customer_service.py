@@ -916,7 +916,7 @@ _HOUR_CHOICES: list[tuple[int, str]] = [(h, _hour_label(h)) for h in range(24)]
 
 @router.get("/availability", response_class=HTMLResponse)
 def cs_availability(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    from app.services.google_calendar import load_scheduling_config
+    from app.services.google_calendar import booking_enabled, load_scheduling_config
 
     cfg = load_scheduling_config(db)
     day_rows = []
@@ -946,6 +946,8 @@ def cs_availability(request: Request, db: Session = Depends(get_db)) -> HTMLResp
             "int_values": int_values,
             "timezones": _TIMEZONES,
             "current_tz": str(cfg.tz),
+            "booking_enabled": booking_enabled(db),
+            "gmail_connected": _gmail_connected(db),
         },
     )
 
