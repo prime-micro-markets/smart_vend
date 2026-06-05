@@ -1,0 +1,93 @@
+-- research completed by claude earlier ---
+  Here's the research.
+
+  ---
+  Free / free-tier programmatic sources for product pricing data
+
+  Reality check for Panama City, FL
+
+  Your local buying universe (Sam's, Walmart, Publix, Winn-Dixie, Dollar General, Aldi, BJ's) has
+  almost no free official pricing APIs, and the ones that exist are bot-protected — the same wall
+  you hit with Sam's. Kroger has zero stores in Florida, so its (excellent) free API is only a
+  benchmark proxy, not local truth. So the honest split is: a few good server-side APIs for
+  reference/benchmark pricing, and for true-local prices you're stuck with client-side capture like
+  the Sam's path you just built.
+
+  Tier 1 — Wire these in first (free, server-side, no bot wall)
+
+  1. UPCitemdb — best immediate fit
+  - Free: 100 lookups/day, no key needed for the trial endpoint; 706M+ UPC/EAN.
+  - Returns: product name, size, images, and a "shopping guide" price band (lowest/highest seen
+  online) + Amazon ASIN / eBay ref. Not real-time, but great for normalizing SKUs by barcode and
+  deduping the same product across Sam's/Webstaurant/CandyMachines.
+  - Effort: low. Server-friendly. Highest value for your comparator's accuracy, even more than as a
+  price source.
+
+  2. Open Prices (Open Food Facts) — open dataset, and you can contribute back
+  - Free & open: read API needs no auth; data is open (ODbL-style, commercial reuse with
+  attribution; the code is AGPL-3.0). Filter by barcode and location/store.
+  - Catch: US coverage is still thin (~125k prices globally as of mid-2025). But it's the one source
+  you could also push your Sam's captures into and pull community prices from. Strategic, low-risk.
+
+  3. SerpApi Google Shopping (or Serper.dev / SearchApi.io)
+  - Free: SerpApi 100 searches/mo; Serper.dev gives ~2,500 free credits. They run the scraping; you
+  get clean multi-merchant prices back over a normal API.
+  - Use: cross-merchant "what does this retail for" to sanity-check your wholesale margin. Tiny free
+  tier — good for spot checks, not bulk.
+
+  Tier 2 — Strong but conditional
+
+  4. Kroger Public API — free dev account, OAuth2 client_credentials (product.compact scope),
+  Products API returns per-store regular + promo price (requires a locationId from the Locations
+  API). Clean, server-friendly, ~generous public limits. Caveat: not in FL → use as a national
+  shelf-price benchmark only.
+
+  5. Amazon Product Advertising API (PA-API 5.0) — free, strong packaged snack/drink/candy coverage
+  with real prices. Catch: requires an Amazon Associates account that keeps making qualifying sales,
+  plus tight rate limits. (From general knowledge — verify current Associates terms before
+  committing.)
+
+  6. eBay Browse API — free, real marketplace prices; decent for bulk/case lots of candy and drinks,
+  weak for everyday wholesale.
+
+  Tier 3 — Macro context only
+
+  7. BLS Average Price Data API — free, gives regional average retail prices for select food
+  commodities. Not SKU-level; useful only as a "are snack prices trending up" backdrop. (Verify.)
+
+  Skip / same problem as Sam's
+
+  - Costco, Publix, BJ's — no public API, bot-protected → client-side capture only (and you have no
+  Costco locally per your notes).
+  - Walmart unofficial RapidAPI "APIs", Sam's RapidAPI scrapers — hosted scrapers with free tiers,
+  but same Akamai fragility + ToS risk. Don't reintroduce the problem you just removed.
+  - Instacart / Faire — partner-approval-gated, not free.
+
+  My recommendation
+
+  Add UPCitemdb (barcode normalization) and Open Prices (open dataset + contribute-back) as new
+  server-side price_fetcher modules — they slot into your existing PriceResult/dispatcher cleanly
+  and have no bot wall. Treat Kroger + a Google Shopping free tier as optional benchmark enrichers
+  (shelf price for margin context), clearly labeled non-local. Everything genuinely local stays on
+  the authenticated-capture pattern you built for Sam's.
+
+  Want me to scaffold a upcitemdb.py fetcher (barcode lookup → PriceResult) the same way the others
+  are structured? That's the cleanest first add.
+  Want me to scaffold a upcitemdb.py fetcher (barcode lookup → PriceResult) the same way the others
+  are structured? That's the cleanest first add.
+
+
+
+--- my response to the research ---- 
+I want to incorporate this data into the site, but for approximating other competitors selling similar products >>
+
+UPCitemdb - absolutely move forward with wiring this up 
+
+BLS Average Price Data API — free, gives regional average retail prices for select food
+  commodities. Not SKU-level; useful only as a "are snack prices trending up" backdrop. (Verify.)
+
+BLS price data should also be combined with data from open prices
+
+Also for the existing webstaraunt store and candmachines options in find product prices, those should remain as-is working condition (no code functionality enhancements at this time) in the prime site, but should be identified as a weak sourcing option in the UI
+  
+  eBay Browse API >> also incorporate this functionality and add in the section of weak sourcing 

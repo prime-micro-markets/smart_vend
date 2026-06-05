@@ -1,8 +1,13 @@
 """add products.upc (barcode for market-reference lookups)
 
-Revision ID: h3i4j5k6l7m8
-Revises: g2h3i4j5k6l7
+Revision ID: l7m8n9o0p1q2
+Revises: k6l7m8n9o0p1
 Create Date: 2026-06-05 00:00:00.000000
+
+Note: an earlier draft of this migration reused the revision id
+``h3i4j5k6l7m8``, which collided with the proforma-financing migration that
+already owned that id on main. It is re-issued here with a unique id chained
+onto the current head (``k6l7m8n9o0p1``) so there is a single linear head.
 
 """
 from typing import Sequence, Union
@@ -10,8 +15,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "h3i4j5k6l7m8"
-down_revision: Union[str, Sequence[str], None] = "g2h3i4j5k6l7"
+revision: str = "l7m8n9o0p1q2"
+down_revision: Union[str, Sequence[str], None] = "k6l7m8n9o0p1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
