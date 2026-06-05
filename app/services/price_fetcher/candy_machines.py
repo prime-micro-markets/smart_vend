@@ -85,7 +85,7 @@ def search_products(
     max_results: int = 6,
 ) -> list[PriceResult]:
     try:
-        with httpx.Client(timeout=20, follow_redirects=True, verify=False) as client:
+        with httpx.Client(timeout=10, follow_redirects=True, verify=False) as client:
             r = client.get(
                 _SEARCH_URL,
                 params={"Search": query},

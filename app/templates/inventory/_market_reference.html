@@ -1,0 +1,77 @@
+{# Market-reference panel: read-only competitor/approximate prices for a similar
+   product. Swapped into #market-ref. Nothing here is a cost — it never touches
+   margins. The form re-posts to refresh (and to save a corrected UPC). #}
+<div class="card border-info border-opacity-25">
+  <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-2">
+    <h6 class="mb-0 small text-info">
+      <i class="bi bi-graph-up-arrow me-1"></i>Market reference
+      <span class="badge bg-info-subtle text-info border border-info-subtle ms-1" style="font-size:.6rem">reference only</span>
+    </h6>
+  </div>
+  <div class="card-body small">
+    <p class="text-muted mb-2" style="font-size:.72rem">
+      What other sellers charge for a similar item, from free public data. This is a sanity check
+      for your <strong>sell</strong> price — it never feeds your cost or margin.
+    </p>
+
+    <form hx-post="/inventory/compare/market" hx-target="#market-ref" hx-swap="innerHTML"
+          hx-indicator="#market-spin" class="row g-2 align-items-end mb-3">
+      {% if product %}<input type="hidden" name="product_id" value="{{ product.id }}">{% endif %}
+      <div class="col-sm-5">
+        <label class="form-label mb-1" style="font-size:.7rem">UPC / barcode</label>
+        <input type="text" name="upc" class="form-control form-control-sm" inputmode="numeric"
+               value="{{ upc or '' }}" placeholder="needed for barcode lookups">
+      </div>
+      <div class="col-sm-5">
+        <label class="form-label mb-1" style="font-size:.7rem">Search term (eBay)</label>
+        <input type="text" name="product_query" class="form-control form-control-sm"
+               value="{{ query or '' }}" placeholder="e.g. Red Bull 12oz 24 pack">
+      </div>
+      <div class="col-sm-2">
+        <button type="submit" class="btn btn-info btn-sm w-100 text-white">
+          <span id="market-spin" class="htmx-indicator spinner-border spinner-border-sm" role="status"></span>
+          Check
+        </button>
+      </div>
+    </form>
+
+    {% if refs is defined and refs %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Source</th>
+            <th class="text-end">Low</th>
+            <th class="text-end">Avg</th>
+            <th class="text-end">High</th>
+            <th class="text-center">Samples</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in refs %}
+          <tr>
+            <td>
+              {% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener" class="text-decoration-none">{{ r.label }}</a>
+              {% else %}{{ r.label }}{% endif %}
+              {% if r.weak %}<span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1" style="font-size:.6rem" title="Noisy/approximate — treat loosely">weak sourcing</span>{% endif %}
+              {% if r.notes %}<div class="text-muted" style="font-size:.66rem">{{ r.notes }}</div>{% endif %}
+            </td>
+            <td class="text-end">{{ '$%.2f'|format(r.low) if r.low is not none else '—' }}</td>
+            <td class="text-end fw-semibold">{{ '$%.2f'|format(r.avg) if r.avg is not none else '—' }}</td>
+            <td class="text-end">{{ '$%.2f'|format(r.high) if r.high is not none else '—' }}</td>
+            <td class="text-center text-muted">{{ r.sample_count or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif refs is defined %}
+    <div class="alert alert-light border py-2 px-3 mb-0 small text-muted">
+      No market data found. Add a <strong>UPC</strong> for barcode lookups (UPCitemdb, Open Prices),
+      or set <code>EBAY_CLIENT_ID</code>/<code>EBAY_CLIENT_SECRET</code> for eBay listings.
+    </div>
+    {% else %}
+    <div class="text-muted small">Enter a UPC and/or search term, then click <strong>Check</strong>.</div>
+    {% endif %}
+  </div>
+</div>

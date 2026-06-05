@@ -19,7 +19,7 @@ _log = logging.getLogger(__name__)
 
 _MAX_TOOL_CALLS = 5
 _MAX_HISTORY = 10
-_MAX_TOKENS_CHAT = 380      # keeps responses concise; cuts generation time roughly in half vs 768
+_MAX_TOKENS_CHAT = 380  # keeps responses concise; cuts generation time roughly in half vs 768
 _RATE_LIMIT_PER_HOUR: dict[str, int] = {
     "anthropic": 20,
     "groq": 20,
@@ -106,8 +106,7 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
         )
     elif settings.google_booking_url:
         scheduling_note = (
-            "When asked about scheduling, direct them to book here: "
-            f"{settings.google_booking_url}"
+            f"When asked about scheduling, direct them to book here: {settings.google_booking_url}"
         )
     else:
         scheduling_note = (
@@ -383,7 +382,11 @@ def _load_history(session_id: str, db: Session) -> list[dict]:
 
 
 def _run_anthropic(
-    messages: list[dict], system: str, model: str, session_id: str, db: Session,
+    messages: list[dict],
+    system: str,
+    model: str,
+    session_id: str,
+    db: Session,
     captured: dict | None = None,
 ) -> str:
     import anthropic  # type: ignore[import-untyped]
@@ -513,7 +516,11 @@ def _run_openai_compat(
 
 
 def _run_gemini(
-    messages: list[dict], system: str, model: str, session_id: str, db: Session,
+    messages: list[dict],
+    system: str,
+    model: str,
+    session_id: str,
+    db: Session,
     captured: dict | None = None,
 ) -> str:
     # Use Gemini's OpenAI-compatible endpoint
@@ -532,7 +539,7 @@ def _run_gemini(
 # ── Ollama lead extraction ────────────────────────────────────────────────────
 
 _CONTACT_MARKER = "[CONTACT_NOTED]"
-_CONTACT_MARKER_RE = re.compile(r'\*{0,2}\[CONTACT_NOTED\]\*{0,2}', re.IGNORECASE)
+_CONTACT_MARKER_RE = re.compile(r"\*{0,2}\[CONTACT_NOTED\]\*{0,2}", re.IGNORECASE)
 
 
 def _save_lead_from_conversation(session_id: str, db: Session) -> None:
@@ -550,12 +557,11 @@ def _save_lead_from_conversation(session_id: str, db: Session) -> None:
         .all()
     )
     conversation = "\n".join(
-        f"{'Customer' if m.role == 'user' else 'Assistant'}: {m.content}"
-        for m in msgs
+        f"{'Customer' if m.role == 'user' else 'Assistant'}: {m.content}" for m in msgs
     )
 
-    email_m = re.search(r'\b[\w.+-]+@[\w-]+\.[\w.]+\b', conversation)
-    phone_m = re.search(r'\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', conversation)
+    email_m = re.search(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b", conversation)
+    phone_m = re.search(r"\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", conversation)
     email = email_m.group(0) if email_m else None
     phone = phone_m.group(0) if phone_m else None
 
@@ -643,20 +649,28 @@ def _dispatch(
         if not settings.groq_api_key:
             raise RuntimeError("GROQ_API_KEY not configured.")
         return _run_openai_compat(
-            messages, system, model,
+            messages,
+            system,
+            model,
             api_key=settings.groq_api_key,
             base_url="https://api.groq.com/openai/v1",
-            session_id=session_id, db=db, captured=captured,
+            session_id=session_id,
+            db=db,
+            captured=captured,
         )
 
     if provider == "openai":
         if not settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY not configured.")
         return _run_openai_compat(
-            messages, system, model,
+            messages,
+            system,
+            model,
             api_key=settings.openai_api_key,
             base_url=None,
-            session_id=session_id, db=db, captured=captured,
+            session_id=session_id,
+            db=db,
+            captured=captured,
         )
 
     if provider == "gemini":
@@ -666,7 +680,9 @@ def _dispatch(
 
     if provider == "ollama":
         reply = _run_openai_compat(
-            messages, system, model,
+            messages,
+            system,
+            model,
             api_key="ollama",
             base_url=settings.ollama_base_url,
             session_id=session_id,
@@ -724,7 +740,8 @@ def get_chatbot_reply(session_id: str, user_message: str, db: Session, before_id
         if provider != "anthropic" and settings.anthropic_api_key:
             _log.warning(
                 "Chatbot primary provider %r failed (%s); falling back to Claude Haiku.",
-                provider, primary_exc,
+                provider,
+                primary_exc,
             )
             try:
                 reply = _run_anthropic(
@@ -734,8 +751,9 @@ def get_chatbot_reply(session_id: str, user_message: str, db: Session, before_id
                 _log.error("Chatbot Anthropic fallback also failed: %s", fb_exc)
                 reply = _error_message(primary_exc)
         else:
-            _log.error("Chatbot provider %r failed with no fallback available: %s",
-                       provider, primary_exc)
+            _log.error(
+                "Chatbot provider %r failed with no fallback available: %s", provider, primary_exc
+            )
             reply = _error_message(primary_exc)
 
     reply = _ensure_availability_shown(reply, captured)

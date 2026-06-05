@@ -30,6 +30,7 @@ EQUIPMENT_STATUSES = ["active", "inactive", "service_needed"]
 
 # ── Index ──────────────────────────────────────────────────────────────────────
 
+
 @router.get("/", response_class=HTMLResponse)
 def crm_index(
     request: Request,
@@ -90,11 +91,10 @@ def crm_index(
 
 # ── Create client ──────────────────────────────────────────────────────────────
 
+
 @router.get("/new", response_class=HTMLResponse)
 def client_new_form(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request, "crm/_client_form.html", {"client": None}
-    )
+    return templates.TemplateResponse(request, "crm/_client_form.html", {"client": None})
 
 
 @router.post("/", response_class=HTMLResponse)
@@ -126,6 +126,7 @@ def client_create(
 
 
 # ── Reports ────────────────────────────────────────────────────────────────────
+
 
 @router.get("/reports", response_class=HTMLResponse)
 def crm_reports(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
@@ -209,10 +210,9 @@ def crm_reports(request: Request, db: Session = Depends(get_db)) -> HTMLResponse
 
 # ── Client detail ──────────────────────────────────────────────────────────────
 
+
 @router.get("/{client_id}", response_class=HTMLResponse)
-def client_detail(
-    client_id: int, request: Request, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def client_detail(client_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     client = db.get(Client, client_id)
     if not client:
         return Response(status_code=404)
@@ -272,9 +272,7 @@ def client_update(
 
 
 @router.delete("/{client_id}", response_class=HTMLResponse)
-def client_delete(
-    client_id: int, request: Request, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def client_delete(client_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     client = db.get(Client, client_id)
     if client:
         db.delete(client)
@@ -285,6 +283,7 @@ def client_delete(
 
 
 # ── Billing ────────────────────────────────────────────────────────────────────
+
 
 @router.post("/{client_id}/billing", response_class=HTMLResponse)
 def client_billing_save(
@@ -330,10 +329,9 @@ def client_billing_save(
 
 # ── Sites ──────────────────────────────────────────────────────────────────────
 
+
 @router.get("/{client_id}/sites/new", response_class=HTMLResponse)
-def site_new_form(
-    client_id: int, request: Request, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def site_new_form(client_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     client = db.get(Client, client_id)
     if not client:
         return Response(status_code=404)
@@ -449,6 +447,7 @@ def site_delete(
 
 # ── Equipment ──────────────────────────────────────────────────────────────────
 
+
 @router.get("/{client_id}/sites/{site_id}/equipment/new", response_class=HTMLResponse)
 def equipment_new_form(
     client_id: int, site_id: int, request: Request, db: Session = Depends(get_db)
@@ -525,6 +524,7 @@ def equipment_delete(
 
 # ── Notes ──────────────────────────────────────────────────────────────────────
 
+
 @router.post("/{client_id}/notes", response_class=HTMLResponse)
 def note_create(
     client_id: int,
@@ -546,6 +546,7 @@ def note_create(
 
 
 # ── Invoices ───────────────────────────────────────────────────────────────────
+
 
 @router.post("/{client_id}/invoices", response_class=HTMLResponse)
 def invoice_create(
@@ -596,6 +597,7 @@ def invoice_status_update(
 
 
 # ── Convert prospect to client ─────────────────────────────────────────────────
+
 
 @router.post("/convert/{prospect_id}", response_class=HTMLResponse)
 def convert_prospect(

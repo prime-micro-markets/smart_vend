@@ -188,9 +188,7 @@ def prospect_detail(
 
 
 @router.post("/{prospect_id}/stage", response_class=HTMLResponse)
-def prospect_advance_stage(
-    prospect_id: int, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def prospect_advance_stage(prospect_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
     prospect = db.get(Prospect, prospect_id)
     if not prospect:
         return Response(status_code=404)
@@ -206,9 +204,7 @@ def prospect_advance_stage(
 
 
 @router.post("/{prospect_id}/stage/back", response_class=HTMLResponse)
-def prospect_retreat_stage(
-    prospect_id: int, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def prospect_retreat_stage(prospect_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
     prospect = db.get(Prospect, prospect_id)
     if not prospect:
         return Response(status_code=404)

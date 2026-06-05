@@ -6,7 +6,7 @@
   <h1 class="h3 mb-0"><i class="bi bi-box me-2 text-primary"></i>Product Inventory</h1>
 </div>
 <p class="text-muted small mb-3">
-  Build a catalog, source it across vendors, and keep machines stocked. Compare prices across Sam's Club, Walmart, wholesalers, and any vendor you discover.
+  Build a catalog, get costs in, and keep your machines stocked.
 </p>
 
 {# Inventory v2: three tabs instead of four — Discover Suppliers merged into
@@ -46,23 +46,54 @@
   <!-- ===================== TAB: PRODUCTS ===================== -->
   <div class="tab-pane fade {% if active_tab == 'products' %}show active{% endif %}" id="pane-products" role="tabpanel">
 
-    <div class="d-flex align-items-center justify-content-end pt-1 mb-1">
-      <button class="btn btn-sm btn-link text-muted p-0" type="button"
-              data-bs-toggle="collapse" data-bs-target="#help-products" title="Help &amp; instructions">
-        <i class="bi bi-question-circle"></i>
-      </button>
+    <!-- Quick start: the numbered path a new operator follows -->
+    <div class="card border-primary border-opacity-25 mb-3">
+      <div class="card-body py-2 px-3">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <span class="fw-semibold small"><i class="bi bi-rocket-takeoff me-1 text-primary"></i>Quick start</span>
+          <button class="btn btn-sm btn-link text-muted text-decoration-none p-0" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#help-products"
+                  title="Full detail on costs, UPCs, Sam's paste, and market pricing">
+            More detail
+          </button>
+        </div>
+        <ol class="mb-0 ps-3 small">
+          <li><strong>Add your products</strong> with <em>Add Product</em>, or <em>Import CSV</em> to load many at once.</li>
+          <li><strong>Get costs in.</strong> Click <em>Source missing prices</em> to look them up automatically, or enter them yourself with <em>Bulk Costs</em>, <em>Import CSV</em>, or <em>Paste Sam's</em>.</li>
+          <li><strong>Optional:</strong> click <em>Fill UPCs</em> to add barcodes, which unlock the market-price reference.</li>
+          <li><strong>Stock the machines.</strong> Watch the margin badges and build a shopping list with <em>Restock Run</em>.</li>
+        </ol>
+      </div>
     </div>
+
     <div class="collapse mb-3" id="help-products">
       <div class="card border-info border-opacity-25">
         <div class="card-body bg-info-subtle rounded small">
-          <strong>Product Catalog</strong> — Manage all vending products with cost, sell price, and stock tracking.
-          <ul class="mb-0 mt-1">
-            <li>Use <strong>Add Product</strong> to create a new SKU with cost, price, and par level.</li>
-            <li>Yellow rows are below par level — restock with the <i class="bi bi-plus-circle"></i> button.</li>
-            <li>Click a product name to open its detail page: compare supplier prices, see restock history, and run an online price check.</li>
-            <li>The <strong>Best Source</strong> column shows the cheapest supplier on file (and how many are compared); <strong>Cost</strong> and <strong>Margin</strong> follow the cheapest per-unit cost.</li>
-            <li>Filter by category or supplier; toggle <em>Low Stock</em> or <em>Seasonal</em>. Use <strong>Restock Run</strong> for a supplier-grouped shopping list of everything below par.</li>
-            <li>Margin badges: <span class="badge bg-success">green</span> ≥ 45%, <span class="badge bg-warning text-dark">yellow</span> 30–44%, <span class="badge bg-danger">red</span> &lt; 30%.</li>
+
+          <strong><i class="bi bi-cash-coin me-1"></i>Getting costs in (this is what drives your margins)</strong>
+          <ol class="mb-0 mt-1 ps-3">
+            <li><strong>Source missing prices</strong> (the blue button): looks up a wholesale price for every SKU that has none, in the background, and saves the cheapest it finds. One click, no typing. It is a best-effort web lookup, so some SKUs come back empty for you to enter by hand.</li>
+            <li><strong>Bulk Costs</strong>: an inline grid. Type a case price and pack for each SKU, then <em>Save all</em>. The fastest manual way to clear "missing cost".</li>
+            <li><strong>Import CSV</strong>: upload a sheet with columns <code>sku, case_price, case_pack_qty</code> (optional <code>upc</code>). Rows match by SKU then name. Download the template on that page.</li>
+            <li><strong>Paste Sam's</strong>: capture your actual paid prices from your own Sam's order history. Drag the bookmarklet to your bookmarks bar, click it on <code>samsclub.com/orders</code> while signed in, then paste here to review and save. No password sharing.</li>
+          </ol>
+          <p class="text-muted mb-0 mt-1">All of these save onto the product as a supplier cost that feeds <strong>Best Source</strong>, <strong>Cost</strong>, and <strong>Margin</strong>.</p>
+
+          <hr class="my-2">
+          <strong><i class="bi bi-upc-scan me-1"></i>UPCs and market pricing (reference only, never a cost)</strong>
+          <ol class="mb-0 mt-1 ps-3">
+            <li><strong>Fill UPCs</strong>: auto-looks-up barcodes for products that don't have one, from the name. Only fills blanks; fix any wrong match on the product's edit form. Capped per run for the daily lookup limit.</li>
+            <li>You can also set a UPC by hand (Add/Edit form), or load them with the <code>upc</code> column in <em>Import CSV</em>.</li>
+            <li>Once a product has a UPC, the <strong>Market reference</strong> panel on <em>Find Product Prices</em> shows what other sellers charge, as a sanity check for your <em>sell</em> price only. It never changes your cost or margin.</li>
+          </ol>
+
+          <hr class="my-2">
+          <strong><i class="bi bi-grid me-1"></i>Reading the catalog</strong>
+          <ul class="mb-0 mt-1 ps-3">
+            <li>Yellow rows are below par level. Restock with the <i class="bi bi-plus-circle"></i> button.</li>
+            <li><strong>Best Source</strong> shows the cheapest supplier on file; <strong>Cost</strong> and <strong>Margin</strong> follow that price.</li>
+            <li>Margin badges: <span class="badge bg-success">green</span> at or above 45%, <span class="badge bg-warning text-dark">yellow</span> 30 to 44%, <span class="badge bg-danger">red</span> below 30%.</li>
+            <li>Filter by category or supplier; toggle <em>Low Stock</em> or <em>Seasonal</em>.</li>
           </ul>
         </div>
       </div>
@@ -124,15 +155,37 @@
            and no run is already in flight. #}
         {% if unsourced_count and not bulk_sourcing_active %}
         <form method="post" action="/inventory/bulk-source/run" class="d-inline">
-          <button class="btn btn-outline-primary btn-sm"
-                  title="Run Find Product Prices on every SKU missing a supplier offer">
-            <i class="bi bi-broadcast-pin me-1"></i>Source {{ unsourced_count }} missing
+          <button class="btn btn-primary btn-sm"
+                  title="Automatically look up and save a wholesale price for every SKU that has none">
+            <i class="bi bi-broadcast-pin me-1"></i>Source {{ unsourced_count }} missing price{{ 's' if unsourced_count != 1 else '' }}
           </button>
         </form>
         {% elif bulk_sourcing_active %}
-        <button class="btn btn-outline-primary btn-sm" disabled>
+        <button class="btn btn-primary btn-sm" disabled>
           <span class="spinner-border spinner-border-sm me-1" role="status"></span>Sourcing…
         </button>
+        {% endif %}
+        {% if products %}
+        <button class="btn btn-outline-success btn-sm" type="button"
+                data-bs-toggle="collapse" data-bs-target="#bulkCosts"
+                title="Type case price + pack for every SKU at once">
+          <i class="bi bi-table me-1"></i>Bulk Costs
+        </button>
+        <a class="btn btn-outline-success btn-sm" href="/inventory/costs/import"
+           title="Import costs from a CSV">
+          <i class="bi bi-filetype-csv me-1"></i>Import CSV
+        </a>
+        <a class="btn btn-outline-primary btn-sm" href="/inventory/costs/sams-paste"
+           title="Paste actual paid prices from your Sam's order history">
+          <i class="bi bi-clipboard-check me-1"></i>Paste Sam's
+        </a>
+        <form method="post" action="/inventory/upc/fill-missing" class="d-inline"
+              onsubmit="return confirm('Look up barcodes for all products that don\'t have one yet, using UPCitemdb? Best-effort — you can correct any wrong match on the product. Capped per run to respect the daily lookup limit.');">
+          <button type="submit" class="btn btn-outline-info btn-sm"
+                  title="Auto-fill missing UPCs from product names (UPCitemdb)">
+            <i class="bi bi-upc-scan me-1"></i>Fill UPCs
+          </button>
+        </form>
         {% endif %}
         <a class="btn btn-outline-success btn-sm" href="/inventory/restock-run">
           <i class="bi bi-cart-plus me-1"></i>Restock Run
@@ -155,6 +208,30 @@
          hx-get="/inventory/bulk-source/status"
          hx-trigger="load{% if bulk_sourcing_active %}, every 3s{% endif %}"
          hx-swap="outerHTML"></div>
+
+    {% if request.query_params.get('costs_saved') %}
+    <div class="alert alert-success alert-dismissible py-2 px-3 small" role="alert">
+      <i class="bi bi-check-circle me-1"></i>Saved costs for
+      <strong>{{ request.query_params.get('costs_saved') }}</strong> product(s).
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    {% if request.query_params.get('upcs_filled') is not none %}
+    <div class="alert alert-info alert-dismissible py-2 px-3 small" role="alert">
+      <i class="bi bi-upc-scan me-1"></i>Filled
+      <strong>{{ request.query_params.get('upcs_filled') }}</strong> UPC(s)
+      across {{ request.query_params.get('upcs_scanned', '0') }} product(s) without one.
+      {% if request.query_params.get('upcs_filled') == '0' %}
+      <span class="text-muted">No matches found — UPCitemdb may be rate-limited, or names need a brand. You can still add UPCs by hand on each product.</span>
+      {% endif %}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    {% if products %}
+    {% include "inventory/_bulk_costs.html" %}
+    {% endif %}
 
     {% if products %}
     <div class="table-responsive">

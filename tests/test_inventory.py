@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -725,6 +726,35 @@ def test_v2_vendors_supply_not_in_dispatcher() -> None:
     assert "vendors_supply" not in VENDOR_KEYS
 
 
+def test_walmart_fully_removed() -> None:
+    """Walmart is gone from every comparator surface."""
+    from app.services.price_comparator import (
+        _FETCHERS,
+        COMPARATOR_FETCH_KEYS,
+        VENDOR_KEYS,
+        _setting_keys,
+    )
+    from app.services.price_fetcher.models import VENDOR_META
+
+    for collection in (_FETCHERS, VENDOR_KEYS, COMPARATOR_FETCH_KEYS, VENDOR_META):
+        assert "walmart" not in collection
+    assert _setting_keys("walmart") == {}
+
+
+def test_sams_is_ingest_only_not_dispatched() -> None:
+    """Sam's keeps its settings (Club ID/ZIP for targeting) but the comparator
+    never direct-fetches it — costs arrive via the purchase-history paste import."""
+    from app.services.price_comparator import (
+        _FETCHERS,
+        COMPARATOR_FETCH_KEYS,
+        VENDOR_KEYS,
+    )
+
+    assert "sams_club" in VENDOR_KEYS  # settings still editable
+    assert "sams_club" not in _FETCHERS  # not direct-fetched
+    assert "sams_club" not in COMPARATOR_FETCH_KEYS  # not a checkbox
+
+
 def test_v2_product_detail_splits_paid_vs_market(client: TestClient, db: Session) -> None:
     """The detail page now renders two cards side by side: What I've paid + Market prices."""
     p = _make_product(db)
@@ -760,9 +790,320 @@ def test_v2_bulk_source_button_only_when_unsourced(client: TestClient, db: Sessi
     assert "Source 0 missing" not in resp.text
 
 
+# ── Phase 1: fast cost entry (bulk grid + CSV import) ──────────────────────────
+
+
+def test_bulk_costs_save_creates_sams_source(client: TestClient, db: Session) -> None:
+    """The bulk grid saves a Sam's Club ProductSource per filled row, with the
+    unit cost derived from case price / pack."""
+    p = _make_product(db, unit_cost=None, case_pack_qty=None)
+    resp = client.post(
+        "/inventory/costs/bulk",
+        data={"supplier_name": "Sam's Club", f"case_price_{p.id}": "18.96", f"pack_{p.id}": "24"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "costs_saved=1" in resp.headers["location"]
+    db.refresh(p)
+    assert p.source_count == 1
+    src = p.sources[0]
+    assert src.supplier.name == "Sam's Club"
+    assert src.case_price == 18.96
+    assert src.origin == "bulk_entry"
+    assert abs(p.effective_cost - (18.96 / 24)) < 0.001
+    # Pack backfilled onto the product for future pre-fills.
+    assert p.case_pack_qty == 24
+
+
+def test_bulk_costs_skips_blank_rows(client: TestClient, db: Session) -> None:
+    """Rows with no/zero case price are ignored, not saved as empty sources."""
+    p1 = _make_product(db, sku="A", name="Filled")
+    p2 = _make_product(db, sku="B", name="Blank")
+    resp = client.post(
+        "/inventory/costs/bulk",
+        data={
+            "supplier_name": "Sam's Club",
+            f"case_price_{p1.id}": "10.00",
+            f"pack_{p1.id}": "20",
+            f"case_price_{p2.id}": "",
+            f"pack_{p2.id}": "24",
+        },
+        follow_redirects=False,
+    )
+    assert "costs_saved=1" in resp.headers["location"]
+    db.refresh(p2)
+    assert p2.source_count == 0
+
+
+def test_cost_csv_template_downloads(client: TestClient) -> None:
+    resp = client.get("/inventory/costs/import/template")
+    assert resp.status_code == 200
+    assert "text/csv" in resp.headers["content-type"]
+    assert "sku,case_price,case_pack_qty" in resp.text
+
+
+def test_cost_csv_import_matches_by_sku(client: TestClient, db: Session) -> None:
+    _make_product(db, sku="WATER-16OZ", name="Water 16oz", unit_cost=None)
+    csv_body = "sku,case_price,case_pack_qty\nwater-16oz,18.96,24\nGHOST-SKU,9.99,12\n"
+    resp = client.post(
+        "/inventory/costs/import",
+        data={"supplier_name": "Sam's Club"},
+        files={"file": ("costs.csv", csv_body.encode(), "text/csv")},
+    )
+    assert resp.status_code == 200
+    assert "Saved costs for" in resp.text
+    # The matched SKU got a source; the unknown SKU is reported unmatched.
+    assert "GHOST-SKU" in resp.text
+    p = db.query(Product).filter(Product.sku == "WATER-16OZ").first()
+    assert p is not None
+    assert p.source_count == 1
+    assert abs(p.effective_cost - (18.96 / 24)) < 0.001
+
+
 def test_v2_bulk_source_button_visible_when_work_to_do(client: TestClient, db: Session) -> None:
     """At least one unsourced active SKU → 'Source N missing' button appears."""
     _make_product(db)
     resp = client.get("/inventory/")
     assert resp.status_code == 200
     assert "Source 1 missing" in resp.text
+
+
+# ── Phase 2: Sam's purchase-history paste import ───────────────────────────────
+
+
+def test_parse_sams_paste_json() -> None:
+    from app.services.sams_paste import parse_sams_paste
+
+    blob = '[{"name":"Member\'s Mark Water 40pk","paid_price":"$3.98","qty":40}]'
+    lines = parse_sams_paste(blob)
+    assert len(lines) == 1
+    assert lines[0].name.startswith("Member's Mark Water")
+    assert lines[0].paid_price == 3.98
+    assert lines[0].qty == 40
+
+
+def test_parse_sams_paste_csv_export() -> None:
+    from app.services.sams_paste import parse_sams_paste
+
+    blob = "Item Description,Quantity,Price\nBottled Water 24ct,1,$18.96\nChips Variety,2,$24.50\n"
+    lines = parse_sams_paste(blob)
+    assert len(lines) == 2
+    assert lines[0].name == "Bottled Water 24ct"
+    assert lines[0].paid_price == 18.96
+
+
+def test_sams_paste_preview_matches_product(client: TestClient, db: Session) -> None:
+    _make_product(db, sku="WATER-16OZ", name="Bottled Water 16oz")
+    blob = '[{"name":"Bottled Water 16oz Case","paid_price":18.96,"qty":24}]'
+    resp = client.post("/inventory/costs/sams-paste/preview", data={"pasted": blob})
+    assert resp.status_code == 200
+    # The review table pre-selects the matching SKU and the parsed price.
+    assert "Bottled Water 16oz" in resp.text
+    assert "18.96" in resp.text
+
+
+def test_sams_paste_save_creates_sams_source(client: TestClient, db: Session) -> None:
+    p = _make_product(db, unit_cost=None, case_pack_qty=None)
+    resp = client.post(
+        "/inventory/costs/sams-paste/save",
+        data={
+            "save_0": "1",
+            "name_0": "Bottled Water 16oz Case",
+            "product_0": str(p.id),
+            "price_0": "18.96",
+            "pack_0": "24",
+        },
+    )
+    assert resp.status_code == 200
+    assert "Saved costs for" in resp.text
+    db.refresh(p)
+    assert p.source_count == 1
+    src = p.sources[0]
+    assert src.supplier.name == "Sam's Club"
+    assert src.origin == "sams_purchase"
+    assert abs(p.effective_cost - (18.96 / 24)) < 0.001
+
+
+def test_sams_paste_save_skips_unchecked_or_unmatched(client: TestClient, db: Session) -> None:
+    p = _make_product(db)
+    resp = client.post(
+        "/inventory/costs/sams-paste/save",
+        data={
+            # row 0 checked but no product chosen → skipped
+            "save_0": "1",
+            "name_0": "Mystery Item",
+            "product_0": "",
+            "price_0": "9.99",
+            # row 1 has a product+price but is unchecked → not saved
+            "name_1": "Water",
+            "product_1": str(p.id),
+            "price_1": "18.96",
+        },
+    )
+    assert resp.status_code == 200
+    db.refresh(p)
+    assert p.source_count == 0
+
+
+def test_ingest_router_and_token_removed() -> None:
+    """Phase 2 retired the cross-origin token ingest plumbing."""
+    import importlib
+
+    for mod in ("app.routers.ingest", "app.services.ingest_token"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(mod)
+
+
+# ── Phase 3: market reference (read-only competitor pricing) ───────────────────
+
+
+def test_market_reference_persists_upc_and_renders(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Posting a UPC saves it onto the product and renders the reference table —
+    without ever creating a cost (ProductSource) row."""
+    from app.services.market_reference import MarketReference
+
+    p = _make_product(db, upc=None)
+    monkeypatch.setattr(
+        "app.routers.inventory.gather_market_reference",
+        lambda **kw: [MarketReference("upcitemdb", "UPCitemdb (recorded retail)", avg=2.25)],
+    )
+    resp = client.post(
+        "/inventory/compare/market",
+        data={"product_id": str(p.id), "upc": "0 12345-67890 5", "product_query": "Water"},
+    )
+    assert resp.status_code == 200
+    assert "UPCitemdb (recorded retail)" in resp.text
+    assert "$2.25" in resp.text
+    db.refresh(p)
+    assert p.upc == "012345678905"  # stored digits-only
+    assert p.source_count == 0  # market data is never a cost
+
+
+def test_market_reference_empty_shows_hint(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = _make_product(db)
+    monkeypatch.setattr("app.routers.inventory.gather_market_reference", lambda **kw: [])
+    resp = client.post("/inventory/compare/market", data={"product_id": str(p.id)})
+    assert resp.status_code == 200
+    assert "No market data found" in resp.text
+
+
+def test_weak_vendors_flagged_in_meta() -> None:
+    from app.services.price_fetcher.models import VENDOR_META
+
+    assert VENDOR_META["webstaurantstore"].get("weak") is True
+    assert VENDOR_META["candy_machines"].get("weak") is True
+
+
+# ── Phase 4: comparator results tidy (cost vs market, badges) ──────────────────
+
+
+def test_compare_results_separates_cost_and_market(client: TestClient, db: Session) -> None:
+    """A finished, product-bound comparison renders the cost-candidates table
+    (with a weak badge on a weak vendor) and a separate market-reference panel."""
+    import json as _json
+
+    from app.models.agent import AgentJob
+
+    p = _make_product(db, sku="DOR-1", name="Doritos Nacho")
+    results = [
+        {
+            "vendor_key": "webstaurantstore",
+            "vendor_name": "WebstaurantStore",
+            "vendor_type": "online_wholesale",
+            "product_name": "Doritos Nacho Case",
+            "unit_price": 0.50,
+            "case_price": 12.0,
+            "case_qty": 24,
+            "source": "scrape",
+            "confidence": "medium",
+        }
+    ]
+    job = AgentJob(
+        job_type="price_comparison",
+        status="done",
+        input_params=_json.dumps({"product_query": "Doritos", "product_id": p.id}),
+        draft_body=_json.dumps(results),
+        prospects_found=1,
+    )
+    db.add(job)
+    db.commit()
+
+    resp = client.get(f"/inventory/compare/{job.id}")
+    assert resp.status_code == 200
+    assert "Supplier cost candidates" in resp.text  # cost side labeled
+    assert "Market reference" in resp.text  # market side present + separate
+    assert "weak" in resp.text  # weak vendor flagged
+
+
+# ── UPC population: programmatic (auto + bulk) and manual single ───────────────
+
+
+def test_product_create_and_update_persist_upc(client: TestClient, db: Session) -> None:
+    """The product form stores a digits-only UPC on create and edit."""
+    resp = client.post(
+        "/inventory/",
+        data={"name": "Coke 12oz", "sku": "COKE-12", "upc": "0 12000-16115 5"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    p = db.query(Product).filter(Product.sku == "COKE-12").first()
+    assert p is not None and p.upc == "012000161155"
+    # Edit clears it back out when blank.
+    client.post("/inventory/" + str(p.id), data={"name": "Coke 12oz", "upc": ""})
+    db.refresh(p)
+    assert p.upc is None
+
+
+def test_cost_csv_import_sets_upc_including_price_less_rows(
+    client: TestClient, db: Session
+) -> None:
+    _make_product(db, sku="WATER-16OZ", name="Water 16oz", upc=None)
+    _make_product(db, sku="COKE-12", name="Coke 12oz", upc=None)
+    # Row 1 has price + upc; row 2 is UPC-only (no price) and must still set the UPC.
+    csv_body = (
+        "sku,case_price,case_pack_qty,upc\n"
+        "WATER-16OZ,18.96,24,012000161155\n"
+        "COKE-12,,,036000291452\n"
+    )
+    resp = client.post(
+        "/inventory/costs/import",
+        data={"supplier_name": "Sam's Club"},
+        files={"file": ("costs.csv", csv_body.encode(), "text/csv")},
+    )
+    assert resp.status_code == 200
+    assert "set" in resp.text.lower()  # "Also set N UPC(s)"
+    w = db.query(Product).filter(Product.sku == "WATER-16OZ").first()
+    c = db.query(Product).filter(Product.sku == "COKE-12").first()
+    assert w.upc == "012000161155" and w.source_count == 1
+    assert c.upc == "036000291452" and c.source_count == 0  # UPC-only, no cost
+
+
+def test_inventory_help_documents_new_features(client: TestClient, db: Session) -> None:
+    """The Catalog tab carries in-UI instructions for the new cost/UPC/market tools."""
+    _make_product(db)
+    resp = client.get("/inventory/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Quick start" in body  # numbered getting-started card
+    assert "More detail" in body  # discoverable full-help toggle
+    for phrase in ("Bulk Costs", "Import CSV", "Paste Sam's", "Fill UPCs", "Market reference"):
+        assert phrase in body, f"help missing guidance for {phrase}"
+
+
+def test_fill_missing_upcs_only_fills_blanks(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blank = _make_product(db, sku="A", name="Doritos Nacho", upc=None)
+    already = _make_product(db, sku="B", name="Lays Classic", upc="111111111111")
+    monkeypatch.setattr("app.routers.inventory.search_upc", lambda q: "999999999999")
+    resp = client.post("/inventory/upc/fill-missing", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "upcs_filled=1" in resp.headers["location"]
+    db.refresh(blank)
+    db.refresh(already)
+    assert blank.upc == "999999999999"  # filled
+    assert already.upc == "111111111111"  # left untouched

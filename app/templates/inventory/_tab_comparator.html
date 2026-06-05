@@ -11,14 +11,18 @@
   <div class="collapse mb-3" id="help-compare">
     <div class="card border-info border-opacity-25">
       <div class="card-body bg-info-subtle rounded small">
-        <strong>Find Product Prices</strong> compares a single SKU across Sam's Club, Walmart, wholesale vendors, and the open web, using AI-powered search when direct scrapes come up empty.
-        <ul class="mb-0 mt-1">
-          <li>Type a product name (e.g. "Doritos", "Red Bull 8oz") and choose which vendors to check.</li>
-          <li>Configure store ZIP/Club ID via the <i class="bi bi-gear"></i> gear icon so searches target your local store.</li>
-          <li>Results show unit and case prices when found. <span class="badge bg-success">Best</span> highlights the lowest unit price.</li>
-          <li><strong>Walmart &amp; Sam's Club</strong> block server-side price scraping. AI search finds product links — click through to confirm the current price. Use <strong>Tavily</strong> as provider for better results.</li>
-          <li>Source badges: <span class="badge bg-primary">Live</span> direct scrape, <span class="badge bg-secondary">AI Est.</span> AI web search result.</li>
-          <li>Use <strong>Export CSV</strong> on the results page to save comparisons.</li>
+        <strong>Find Product Prices</strong> is a best-effort web lookup for one product at a time. For reliable costs, use <strong>Source missing prices</strong> on the Catalog tab (it runs this for every SKU at once) or enter costs manually.
+        <ol class="mb-0 mt-2 ps-3">
+          <li><strong>Type a product</strong> (for example "Doritos" or "Red Bull 8oz"). It is pre-filled when you came from a specific SKU.</li>
+          <li><strong>Keep the default vendors</strong> checked, unless you want to narrow the search.</li>
+          <li>Click <strong>Find Product Prices</strong>. Results show unit and case prices when found; <span class="badge bg-success">Best</span> marks the lowest unit price.</li>
+        </ol>
+        <hr class="my-2">
+        <ul class="mb-0 ps-3">
+          <li>Source badges: <span class="badge bg-primary">Live</span> direct scrape, <span class="badge bg-secondary">AI Est.</span> web-search estimate, <span class="badge bg-warning text-dark">weak</span> approximate. Verify estimates before ordering.</li>
+          <li><strong>Sam's Club</strong> blocks server-side pulls, so it is not listed here. Capture your actual paid prices with <strong>Paste Sam's</strong> on the Catalog tab instead.</li>
+          <li><strong>Market reference</strong> (below results) shows what other sellers charge, for reference only. It never feeds your cost or margin.</li>
+          <li>Lookups run on the live site. On a local machine, outbound calls are usually blocked, so prices only come back on primemicromarkets.com. Use <strong>Export CSV</strong> on the results page to save a comparison.</li>
         </ul>
       </div>
     </div>
@@ -73,7 +77,7 @@
             <div class="mb-3">
               <label class="form-label fw-semibold small">Compare at these vendors</label>
               <div class="row row-cols-1 row-cols-sm-2 g-1">
-                {% for vk in vendor_keys %}
+                {% for vk in compare_vendor_keys %}
                 {% set meta = vendor_meta[vk] %}
                 {# WebstaurantStore is reliable only with Firecrawl. Default
                    it to unchecked when Firecrawl isn't configured so the
@@ -88,27 +92,11 @@
                     <label class="form-check-label small d-flex align-items-center gap-1 flex-wrap" for="vend_{{ vk }}">
                       <i class="bi {{ meta.icon }} text-{{ meta.color }}"></i>
                       {{ meta.label }}
-                      {% if vk == 'sams_club' %}
-                        {% if vendor_cfg.sams_club.club_id %}
-                          <span class="badge bg-success-subtle text-success border border-success-subtle ms-1" style="font-size:.65rem">
-                            Club #{{ vendor_cfg.sams_club.club_id }}
-                          </span>
-                        {% else %}
-                          <span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1" style="font-size:.65rem">
-                            Set ZIP ↗
-                          </span>
-                        {% endif %}
-                      {% elif vk == 'walmart' %}
-                        {% if vendor_cfg.walmart.store_id %}
-                          <span class="badge bg-success-subtle text-success border border-success-subtle ms-1" style="font-size:.65rem">
-                            Store #{{ vendor_cfg.walmart.store_id }}
-                          </span>
-                        {% else %}
-                          <span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1" style="font-size:.65rem">
-                            Set ZIP ↗
-                          </span>
-                        {% endif %}
-                      {% elif vk == 'webstaurantstore' %}
+                      {% if meta.weak %}
+                      <span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1" style="font-size:.6rem"
+                            title="Weak sourcing: prices are approximate or unreliable — use as a loose reference">weak</span>
+                      {% endif %}
+                      {% if vk == 'webstaurantstore' %}
                         {% if firecrawl_available %}
                           {% if vendor_cfg.webstaurantstore.email %}
                           <span class="badge bg-info-subtle text-info border border-info-subtle ms-1" style="font-size:.65rem">
@@ -224,27 +212,27 @@
       <div id="compare-placeholder" class="card border-0 bg-light d-flex align-items-center justify-content-center py-5">
         <div class="text-center text-muted px-4">
           <i class="bi bi-bar-chart-line fs-1 d-block mb-3 text-primary opacity-50"></i>
-          <h5 class="mb-2">Find product prices across vendors</h5>
-          <p class="mb-1 small">
-            Compare one SKU at Sam's Club, Walmart, wholesale distributors, and the open web. AI fills the gaps when a direct scrape comes up empty, and CandyMachines surfaces off-domain vendor candidates as a bonus.
-          </p>
+          <h5 class="mb-2">Check a product's price on the web</h5>
           <p class="small text-muted mb-3">
-            Enter a product name and click <strong>Find Product Prices</strong> to see results.
+            Type a product name and click <strong>Find Product Prices</strong>. To cost your whole
+            catalog at once, use <strong>Source missing prices</strong> on the Catalog tab instead.
           </p>
           <div class="d-flex gap-2 justify-content-center flex-wrap small">
-            {% for vk in vendor_keys %}
+            {% for vk in compare_vendor_keys %}
             {% set meta = vendor_meta[vk] %}
             <span class="badge bg-{{ meta.color }}-subtle text-{{ meta.color }} border border-{{ meta.color }}-subtle px-2 py-1">
               <i class="bi {{ meta.icon }} me-1"></i>{{ meta.label }}
             </span>
             {% endfor %}
           </div>
-          <div class="mt-4 small text-muted">
-            <i class="bi bi-gear me-1"></i>
-            Click the <strong></i></strong> gear icon next to Compare Prices to configure
-            store ZIP codes for location-specific pricing.
-          </div>
         </div>
+      </div>
+
+      <!-- Market reference (read-only competitor pricing; never a cost) -->
+      <div id="market-ref" class="mt-3">
+        {% with product=compare_product, query=(compare_query or (compare_product.name if compare_product else '')), upc=(compare_product.upc if compare_product else '') %}
+        {% include "inventory/_market_reference.html" %}
+        {% endwith %}
       </div>
 
     </div>

@@ -64,39 +64,39 @@ def locations_map_data(db: Session = Depends(get_db)) -> JSONResponse:
         parts = [p.address, p.city, "FL"]
         return ", ".join(p for p in parts if p)
 
-    return JSONResponse({
-        "locations": [
-            {
-                "id": l.id,
-                "name": l.name,
-                "address": loc_addr(l),
-                "status": l.status,
-                "venue_type": l.venue_type or "",
-                "contact_name": l.contact_name or "",
-                "url": f"/locations/{l.id}",
-            }
-            for l in locs
-        ],
-        "leads": [
-            {
-                "id": p.id,
-                "name": p.company_name,
-                "address": lead_addr(p),
-                "stage": p.pipeline_stage,
-                "venue_type": p.venue_type or "",
-                "contact_name": p.contact_name or "",
-                "url": f"/sales/{p.id}",
-            }
-            for p in leads
-        ],
-    })
+    return JSONResponse(
+        {
+            "locations": [
+                {
+                    "id": l.id,
+                    "name": l.name,
+                    "address": loc_addr(l),
+                    "status": l.status,
+                    "venue_type": l.venue_type or "",
+                    "contact_name": l.contact_name or "",
+                    "url": f"/locations/{l.id}",
+                }
+                for l in locs
+            ],
+            "leads": [
+                {
+                    "id": p.id,
+                    "name": p.company_name,
+                    "address": lead_addr(p),
+                    "stage": p.pipeline_stage,
+                    "venue_type": p.venue_type or "",
+                    "contact_name": p.contact_name or "",
+                    "url": f"/sales/{p.id}",
+                }
+                for p in leads
+            ],
+        }
+    )
 
 
 @router.get("/new", response_class=HTMLResponse)
 def location_new_form(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request, "locations/_location_form.html", {"location": None}
-    )
+    return templates.TemplateResponse(request, "locations/_location_form.html", {"location": None})
 
 
 @router.post("/", response_class=HTMLResponse)
@@ -150,7 +150,9 @@ def location_detail(
         "Prospects": [p for p in linked if p.pipeline_stage in ("lead", "contacted")],
         "Pending": [p for p in linked if p.pipeline_stage == "proposal"],
         "Active": [p for p in linked if p.pipeline_stage == "signed"],
-        "Other": [p for p in linked if p.pipeline_stage not in ("lead", "contacted", "proposal", "signed")],
+        "Other": [
+            p for p in linked if p.pipeline_stage not in ("lead", "contacted", "proposal", "signed")
+        ],
     }
     unlinked = (
         db.query(Prospect)

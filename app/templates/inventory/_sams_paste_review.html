@@ -1,0 +1,71 @@
+{# Review table for a pasted Sam's purchase blob. Each parsed line gets a SKU
+   match (best guess pre-selected), the paid price, and a pack qty for the
+   operator to confirm before saving as Sam's Club costs. #}
+{% if not rows %}
+<div class="alert alert-warning py-2 px-3 small mb-0">
+  Nothing recognizable in that paste. Make sure you copied with the bookmarklet,
+  or upload a Sam's CSV export via <a href="/inventory/costs/import">Import costs</a>.
+</div>
+{% else %}
+<form method="post" action="/inventory/costs/sams-paste/save">
+  <div class="card">
+    <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-2">
+      <h6 class="mb-0 small"><i class="bi bi-list-check me-1"></i>{{ parsed_count }} line(s) parsed</h6>
+      <small class="text-muted">Uncheck rows to skip. Fix any wrong match before saving.</small>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0 small">
+        <thead class="table-light">
+          <tr>
+            <th style="width:2.5rem">Save</th>
+            <th>From Sam's</th>
+            <th style="min-width:12rem">Match to product</th>
+            <th style="width:7rem">Paid price</th>
+            <th style="width:5rem">Pack</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="{{ 'table-warning' if not r.match_id else '' }}">
+            <td>
+              <input type="checkbox" class="form-check-input" name="save_{{ r.idx }}"
+                     value="1" {{ 'checked' if r.match_id and r.paid_price else '' }}>
+              <input type="hidden" name="name_{{ r.idx }}" value="{{ r.name }}">
+            </td>
+            <td>
+              <div class="fw-semibold">{{ r.name }}</div>
+              {% if not r.match_id %}<span class="badge bg-warning-subtle text-warning border border-warning-subtle" style="font-size:.6rem">no match — pick one</span>{% endif %}
+            </td>
+            <td>
+              <select name="product_{{ r.idx }}" class="form-select form-select-sm">
+                <option value="">— skip —</option>
+                {% for p in products %}
+                <option value="{{ p.id }}" {{ 'selected' if p.id == r.match_id else '' }}>{{ p.name }}{% if p.sku %} ({{ p.sku }}){% endif %}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" step="0.01" min="0" name="price_{{ r.idx }}"
+                       class="form-control" value="{{ '%.2f'|format(r.paid_price) if r.paid_price else '' }}">
+              </div>
+            </td>
+            <td>
+              <input type="number" min="1" name="pack_{{ r.idx }}"
+                     class="form-control form-control-sm" value="{{ r.qty or '' }}" placeholder="qty">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer bg-transparent d-flex gap-2 py-2">
+      <button type="submit" class="btn btn-success btn-sm">
+        <i class="bi bi-save me-1"></i>Save checked costs
+      </button>
+      <a href="/inventory/?tab=products" class="btn btn-link btn-sm">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endif %}

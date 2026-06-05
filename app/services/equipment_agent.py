@@ -94,6 +94,7 @@ Do not include any text before or after the JSON array."""
 
 # ── VendGuys matching ─────────────────────────────────────────────────────────
 
+
 def _match_vendguys(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduct | None:
     """Return the best-matching VendGuys product for a DB unit, or None."""
     # Always score — don't trust existing product_url (may be stale/wrong from prior run)
@@ -106,7 +107,21 @@ def _match_vendguys(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduct 
     model_numbers = re.findall(r"\d{3,}", unit_text)
 
     # Keep noise minimal: only articles/prepositions that carry zero discriminating value
-    _NOISE = {"the", "a", "and", "or", "with", "for", "of", "in", "by", "vending", "machine", "store", "market"}
+    _NOISE = {
+        "the",
+        "a",
+        "and",
+        "or",
+        "with",
+        "for",
+        "of",
+        "in",
+        "by",
+        "vending",
+        "machine",
+        "store",
+        "market",
+    }
 
     best: VGProduct | None = None
     best_score = 0
@@ -178,6 +193,7 @@ def _match_cantaloupe(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduc
 
 # ── per-unit context resolution ───────────────────────────────────────────────
 
+
 def _build_context(
     unit: EquipmentUnit,
     catalog: list[VGProduct],
@@ -188,17 +204,15 @@ def _build_context(
     # 1. Try VendGuys catalog match
     vg = _match_vendguys(unit, catalog)
     if vg:
-        content = (
-            f"Product: {vg.title}\n"
-            f"Price: ${vg.price:.2f}\n\n"
-            f"{vg.body_text[:4000]}"
+        content = f"Product: {vg.title}\nPrice: ${vg.price:.2f}\n\n{vg.body_text[:4000]}"
+        log_entries.append(
+            {
+                "event": "matched_vendguys",
+                "unit_id": unit.id,
+                "vg_title": vg.title,
+                "vg_url": vg.page_url,
+            }
         )
-        log_entries.append({
-            "event": "matched_vendguys",
-            "unit_id": unit.id,
-            "vg_title": vg.title,
-            "vg_url": vg.page_url,
-        })
         return {
             "unit": unit,
             "content": content,
@@ -211,17 +225,15 @@ def _build_context(
     ct = _match_cantaloupe(unit, cantaloupe_catalog)
     if ct:
         price_str = f"${ct.price:.2f}" if ct.price else "contact for pricing"
-        content = (
-            f"Product: {ct.title}\n"
-            f"Price: {price_str}\n\n"
-            f"{ct.body_text[:4000]}"
+        content = f"Product: {ct.title}\nPrice: {price_str}\n\n{ct.body_text[:4000]}"
+        log_entries.append(
+            {
+                "event": "matched_cantaloupe",
+                "unit_id": unit.id,
+                "ct_title": ct.title,
+                "ct_url": ct.page_url,
+            }
         )
-        log_entries.append({
-            "event": "matched_cantaloupe",
-            "unit_id": unit.id,
-            "ct_title": ct.title,
-            "ct_url": ct.page_url,
-        })
         return {
             "unit": unit,
             "content": content,
@@ -233,13 +245,15 @@ def _build_context(
     # 3. Fallback: scrape existing product_url
     if unit.product_url:
         text, og_image = vendguys_scraper.scrape_url(unit.product_url)
-        log_entries.append({
-            "event": "scraped_url",
-            "unit_id": unit.id,
-            "url": unit.product_url[:80],
-            "chars": len(text),
-            "og_image": bool(og_image),
-        })
+        log_entries.append(
+            {
+                "event": "scraped_url",
+                "unit_id": unit.id,
+                "url": unit.product_url[:80],
+                "chars": len(text),
+                "og_image": bool(og_image),
+            }
+        )
         return {
             "unit": unit,
             "content": text,
@@ -250,12 +264,16 @@ def _build_context(
 
     log_entries.append({"event": "no_source", "unit_id": unit.id})
     return {
-        "unit": unit, "content": "", "source_image_url": None,
-        "vendguys_page_url": None, "cantaloupe_page_url": None,
+        "unit": unit,
+        "content": "",
+        "source_image_url": None,
+        "vendguys_page_url": None,
+        "cantaloupe_page_url": None,
     }
 
 
 # ── Claude extraction ─────────────────────────────────────────────────────────
+
 
 def _extract_batch(
     client: Any,
@@ -287,16 +305,19 @@ def _extract_batch(
 
     batch_ids = {ctx["unit"].id for ctx in contexts}
     records = [r for r in records if r.get("id") in batch_ids]
-    log_entries.append({
-        "event": "batch_extracted",
-        "unit_ids": list(batch_ids),
-        "records": len(records),
-        "tokens": tokens,
-    })
+    log_entries.append(
+        {
+            "event": "batch_extracted",
+            "unit_ids": list(batch_ids),
+            "records": len(records),
+            "tokens": tokens,
+        }
+    )
     return records, tokens
 
 
 # ── main job ──────────────────────────────────────────────────────────────────
+
 
 def run_equipment_refresh_job(job_id: int) -> None:
     """Background task: refresh equipment specs from VendGuys + direct URL scraping."""
@@ -322,9 +343,7 @@ def run_equipment_refresh_job(job_id: int) -> None:
                 unit_ids = params.get("unit_ids", [])
 
             equipment_model = app_settings.get_str(db, "equipment_model")
-            batch_size = app_settings.get_int(
-                db, "equipment_batch_size", minimum=1, maximum=10
-            )
+            batch_size = app_settings.get_int(db, "equipment_batch_size", minimum=1, maximum=10)
 
             # Refresh all active units (archived ones are off-catalog and skipped). Pricing is
             # owned by the distributor-sourcing system, so the refresh never writes price fields
@@ -333,9 +352,7 @@ def run_equipment_refresh_job(job_id: int) -> None:
             # overwrites hand-checked data or downgrades the "verified" badge.
             base_q = db.query(EquipmentUnit).filter(EquipmentUnit.status == "active")
             units = (
-                base_q.filter(EquipmentUnit.id.in_(unit_ids)).all()
-                if unit_ids
-                else base_q.all()
+                base_q.filter(EquipmentUnit.id.in_(unit_ids)).all() if unit_ids else base_q.all()
             )
 
             if not units:
@@ -360,7 +377,9 @@ def run_equipment_refresh_job(job_id: int) -> None:
 
             try:
                 cantaloupe_catalog = fetch_cantaloupe_catalog()
-                log_entries.append({"event": "cantaloupe_catalog", "products": len(cantaloupe_catalog)})
+                log_entries.append(
+                    {"event": "cantaloupe_catalog", "products": len(cantaloupe_catalog)}
+                )
             except Exception as exc:
                 cantaloupe_catalog = []
                 log_entries.append({"event": "cantaloupe_catalog_error", "error": str(exc)})
@@ -373,15 +392,19 @@ def run_equipment_refresh_job(job_id: int) -> None:
             final_data: list[dict[str, Any]] = []
             total_tokens = 0
 
-            batches = [contexts[i:i + batch_size] for i in range(0, len(contexts), batch_size)]
+            batches = [contexts[i : i + batch_size] for i in range(0, len(contexts), batch_size)]
             for batch_num, batch in enumerate(batches, 1):
-                log_entries.append({
-                    "event": "batch_start",
-                    "batch": batch_num,
-                    "unit_ids": [c["unit"].id for c in batch],
-                })
+                log_entries.append(
+                    {
+                        "event": "batch_start",
+                        "batch": batch_num,
+                        "unit_ids": [c["unit"].id for c in batch],
+                    }
+                )
                 try:
-                    records, batch_tokens = _extract_batch(client, batch, log_entries, equipment_model)
+                    records, batch_tokens = _extract_batch(
+                        client, batch, log_entries, equipment_model
+                    )
                     total_tokens += batch_tokens
 
                     # Inject source_image_url if Claude didn't find one
@@ -401,8 +424,12 @@ def run_equipment_refresh_job(job_id: int) -> None:
 
                     final_data.extend(records)
                 except Exception as exc:
-                    logger.exception("Equipment refresh batch %d failed for job %d", batch_num, job_id)
-                    log_entries.append({"event": "batch_error", "batch": batch_num, "error": str(exc)})
+                    logger.exception(
+                        "Equipment refresh batch %d failed for job %d", batch_num, job_id
+                    )
+                    log_entries.append(
+                        {"event": "batch_error", "batch": batch_num, "error": str(exc)}
+                    )
 
             # ── 4. Download images locally ─────────────────────────────────
             for record in final_data:
@@ -434,7 +461,9 @@ def run_equipment_refresh_job(job_id: int) -> None:
                     log_entries.append({"event": "image_downloaded_firecrawl", "unit_id": uid})
                 else:
                     record["image_url"] = None
-                    log_entries.append({"event": "image_download_failed", "unit_id": uid, "url": raw_url[:100]})
+                    log_entries.append(
+                        {"event": "image_download_failed", "unit_id": uid, "url": raw_url[:100]}
+                    )
 
             # ── 5. Write to DB ─────────────────────────────────────────────
             updated = 0
@@ -468,6 +497,7 @@ def run_equipment_refresh_job(job_id: int) -> None:
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def _extract_json_data(text: str) -> list[dict[str, Any]]:
     from app.services.json_extract import extract_json_list
 
@@ -490,7 +520,12 @@ def _download_image(url: str, unit_id: int) -> str | None:
                 return None
             if len(resp.content) > _IMG_MAX_BYTES:
                 return None
-            _CT_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
+            _CT_EXT = {
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+                "image/gif": ".gif",
+            }
             ext = _CT_EXT.get(ct)
             if not ext:
                 suffix = Path(url.split("?")[0]).suffix.lower()
@@ -516,14 +551,34 @@ def _apply_update(
     unit: EquipmentUnit, record: dict[str, Any], now: datetime, locked: bool = False
 ) -> None:
     fields = [
-        "price_low", "price_high", "price_notes", "monthly_fee", "processing_fee_pct",
-        "warranty_years", "warranty_notes", "extended_warranty_available", "extended_warranty_notes",
-        "height_in", "width_in", "depth_in", "weight_lbs",
-        "capacity_cu_ft", "capacity_units", "power_watts",
-        "operating_temp_low", "operating_temp_high",
-        "connectivity", "payment_types", "ai_accuracy_pct", "certifications",
-        "delivery_days_min", "delivery_days_max", "delivery_notes",
-        "highlights", "image_url", "product_url",
+        "price_low",
+        "price_high",
+        "price_notes",
+        "monthly_fee",
+        "processing_fee_pct",
+        "warranty_years",
+        "warranty_notes",
+        "extended_warranty_available",
+        "extended_warranty_notes",
+        "height_in",
+        "width_in",
+        "depth_in",
+        "weight_lbs",
+        "capacity_cu_ft",
+        "capacity_units",
+        "power_watts",
+        "operating_temp_low",
+        "operating_temp_high",
+        "connectivity",
+        "payment_types",
+        "ai_accuracy_pct",
+        "certifications",
+        "delivery_days_min",
+        "delivery_days_max",
+        "delivery_notes",
+        "highlights",
+        "image_url",
+        "product_url",
     ]
     for field in fields:
         if field in _SOURCE_OWNED_FIELDS:

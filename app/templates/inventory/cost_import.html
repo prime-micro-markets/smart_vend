@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Import Costs – Prime Vending{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb small">
+    <li class="breadcrumb-item"><a href="/inventory/?tab=products">Inventory</a></li>
+    <li class="breadcrumb-item active">Import costs</li>
+  </ol>
+</nav>
+
+<h1 class="h4 mb-1"><i class="bi bi-filetype-csv me-2 text-success"></i>Import costs from CSV</h1>
+<p class="text-muted small mb-3">
+  Upload a spreadsheet of case prices. Each row is matched to a product by
+  <strong>SKU</strong> (or exact name), and saved as a supplier cost that feeds the
+  comparator and your margins. Nothing is scraped, so this always works.
+</p>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-body">
+        <form method="post" action="/inventory/costs/import" enctype="multipart/form-data">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Save costs under supplier</label>
+            <select name="supplier_name" class="form-select form-select-sm" style="max-width:280px">
+              <option value="Sam's Club" selected>Sam's Club</option>
+              {% for s in suppliers %}{% if s.name != "Sam's Club" %}
+              <option value="{{ s.name }}">{{ s.name }}</option>
+              {% endif %}{% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">CSV file</label>
+            <input type="file" name="file" accept=".csv,text/csv" class="form-control form-control-sm" required>
+            <div class="form-text">
+              Columns: <code>sku, case_price, case_pack_qty</code>
+              (a <code>name</code> column also works for matching). Add an optional
+              <code>upc</code> column to bulk-fill barcodes at the same time —
+              UPC-only rows (no price) are allowed.
+            </div>
+          </div>
+          <button type="submit" class="btn btn-success btn-sm">
+            <i class="bi bi-upload me-1"></i>Upload &amp; import
+          </button>
+          <a href="/inventory/?tab=products" class="btn btn-link btn-sm">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card border-info border-opacity-25">
+      <div class="card-body bg-info-subtle rounded small">
+        <p class="mb-2"><strong>Don't have a file?</strong></p>
+        <a href="/inventory/costs/import/template" class="btn btn-outline-info btn-sm mb-2">
+          <i class="bi bi-download me-1"></i>Download template
+        </a>
+        <ul class="mb-0 ps-3">
+          <li>Match is by SKU first, then exact product name.</li>
+          <li>Rows with no positive <code>case_price</code> are skipped.</li>
+          <li>Unmatched rows are reported back so you can fix and re-upload.</li>
+          <li>You can also paste a Sam's purchase export here after relabeling its columns.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

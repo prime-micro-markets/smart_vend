@@ -25,9 +25,7 @@ def _tavily(query: str, max_results: int) -> list[dict[str, Any]]:
     return tavily.search(query, max_results)
 
 
-def search(
-    query: str, max_results: int = 5, provider: str = "duckduckgo"
-) -> list[dict[str, Any]]:
+def search(query: str, max_results: int = 5, provider: str = "duckduckgo") -> list[dict[str, Any]]:
     """Run a web search, falling back to DuckDuckGo if the preferred provider fails.
 
     Returns a list of {title, url, content, score} dicts. Never raises for a
@@ -48,9 +46,7 @@ def search(
             results = _tavily(query, max_results)
             if results:
                 return results
-            logger.warning(
-                "Tavily returned no results for %r; falling back to DuckDuckGo", query
-            )
+            logger.warning("Tavily returned no results for %r; falling back to DuckDuckGo", query)
         except Exception:
             logger.warning(
                 "Tavily search failed for %r; falling back to DuckDuckGo",

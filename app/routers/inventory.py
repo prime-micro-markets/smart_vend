@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import re
@@ -10,15 +12,15 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    File,
     Form,
     HTTPException,
     Query,
     Request,
     Response,
+    UploadFile,
 )
 from fastapi.responses import HTMLResponse, RedirectResponse
-
-logger = logging.getLogger(__name__)
 from sqlalchemy import func as sql_func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -28,9 +30,18 @@ from app.models.agent import AgentJob
 from app.models.inventory import InventoryLog, Product, ProductSource, Supplier
 from app.services import inventory_agent, price_comparator
 from app.services.inventory_agent import PRODUCT_CATEGORY_OPTIONS
-from app.services.price_comparator import VENDOR_KEYS, load_vendor_settings, save_vendor_setting
+from app.services.market_reference import gather_market_reference, search_upc
+from app.services.price_comparator import (
+    COMPARATOR_FETCH_KEYS,
+    VENDOR_KEYS,
+    load_vendor_settings,
+    save_vendor_setting,
+)
 from app.services.price_fetcher.models import VENDOR_META
+from app.services.sams_paste import parse_sams_paste
 from app.views import templates
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
@@ -99,6 +110,11 @@ def _to_float(value: str | None) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def _clean_upc(value: str | None) -> str:
+    """Digits-only barcode (drops spaces/dashes from typed or pasted input)."""
+    return "".join(ch for ch in (value or "") if ch.isdigit())
 
 
 _SLUG_BAD_CHARS = re.compile(r"[^a-z0-9]+")
@@ -444,6 +460,8 @@ def inventory_index(
             "active_tab": tab,
             # comparator
             "vendor_keys": VENDOR_KEYS,
+            # Vendors actually dispatched as checkboxes (Sam's is ingest-only).
+            "compare_vendor_keys": COMPARATOR_FETCH_KEYS,
             "vendor_meta": VENDOR_META,
             "vendor_cfg": vendor_cfg,
             "compare_jobs": compare_jobs,
@@ -674,6 +692,7 @@ def product_create(
     sku: str = Form(""),
     brand: str = Form(""),
     category: str = Form(""),
+    upc: str = Form(""),
     unit_cost: str = Form(""),
     sell_price: str = Form(""),
     unit_size: str = Form(""),
@@ -707,6 +726,7 @@ def product_create(
         name=name,
         brand=brand or None,
         category=category or None,
+        upc=_clean_upc(upc) or None,
         unit_cost=parsed_cost,
         sell_price=parsed_sell,
         unit_size=unit_size or None,
@@ -751,14 +771,13 @@ def seed_starter_products(db: Session = Depends(get_db)) -> HTMLResponse:
 @router.get("/compare/stores", response_class=HTMLResponse)
 def compare_stores(
     request: Request,
-    brand: str = Query("walmart"),
-    compare_walmart_zip: str = Query(""),
+    brand: str = Query("sams_club"),
     compare_sams_zip: str = Query(""),
 ) -> HTMLResponse:
-    """Return nearby store list HTML for store picker in settings panel."""
+    """Return nearby Sam's Club list HTML for the store picker in settings."""
     from app.services import store_locator
 
-    zip_code = (compare_walmart_zip if brand == "walmart" else compare_sams_zip).strip()
+    zip_code = compare_sams_zip.strip()
     stores: list[dict] = []
     error: str | None = None
 
@@ -788,21 +807,15 @@ def compare_settings_save(
     compare_sams_zip: str = Form(""),
     compare_sams_club_id: str = Form(""),
     compare_sams_club_name: str = Form(""),
-    compare_walmart_zip: str = Form(""),
-    compare_walmart_store_id: str = Form(""),
-    compare_walmart_store_name: str = Form(""),
     compare_webstaurantstore_email: str = Form(""),
-    compare_vendors_supply_email: str = Form(""),
     compare_candy_machines_email: str = Form(""),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Save vendor account config."""
     settings_to_save: dict[str, str] = {
         "compare_webstaurantstore_email": compare_webstaurantstore_email.strip(),
-        "compare_vendors_supply_email": compare_vendors_supply_email.strip(),
         "compare_candy_machines_email": compare_candy_machines_email.strip(),
         "compare_sams_zip": compare_sams_zip.strip(),
-        "compare_walmart_zip": compare_walmart_zip.strip(),
     }
 
     sams_club_id = compare_sams_club_id.strip()
@@ -810,12 +823,6 @@ def compare_settings_save(
         settings_to_save["compare_sams_club_id"] = sams_club_id
         if compare_sams_club_name.strip():
             settings_to_save["compare_sams_club_name"] = compare_sams_club_name.strip()
-
-    walmart_store_id = compare_walmart_store_id.strip()
-    if walmart_store_id:
-        settings_to_save["compare_walmart_store_id"] = walmart_store_id
-        if compare_walmart_store_name.strip():
-            settings_to_save["compare_walmart_store_name"] = compare_walmart_store_name.strip()
 
     for key, value in settings_to_save.items():
         if value:
@@ -852,7 +859,7 @@ def compare_run(
             bound_pack = bound_product.case_pack_qty
     params = {
         "product_query": cleaned_query,
-        "vendors": vendors or VENDOR_KEYS,
+        "vendors": vendors or COMPARATOR_FETCH_KEYS,
         "search_provider": search_provider,
         "vendor_config": vendor_cfg,
         # When launched from a product detail page, results can be saved back as
@@ -906,6 +913,7 @@ def compare_poll(job_id: int, request: Request, db: Session = Depends(get_db)) -
     target_product = None
     if input_params.get("product_id"):
         target_product = db.get(Product, input_params["product_id"])
+    network_blocked = bool(price_comparator.job_summary(job).get("network_blocked"))
     return templates.TemplateResponse(
         request,
         "inventory/_comparator_poll.html",
@@ -915,6 +923,7 @@ def compare_poll(job_id: int, request: Request, db: Session = Depends(get_db)) -
             "input_params": input_params,
             "vendor_meta": VENDOR_META,
             "target_product": target_product,
+            "network_blocked": network_blocked,
         },
     )
 
@@ -940,6 +949,7 @@ def compare_results(job_id: int, request: Request, db: Session = Depends(get_db)
     target_product = None
     if input_params.get("product_id"):
         target_product = db.get(Product, input_params["product_id"])
+    network_blocked = bool(price_comparator.job_summary(job).get("network_blocked"))
     return templates.TemplateResponse(
         request,
         "inventory/compare_results.html",
@@ -950,6 +960,7 @@ def compare_results(job_id: int, request: Request, db: Session = Depends(get_db)
             "input_params": input_params,
             "vendor_meta": VENDOR_META,
             "target_product": target_product,
+            "network_blocked": network_blocked,
         },
     )
 
@@ -1076,6 +1087,7 @@ def product_update(
     name: str = Form(...),
     brand: str = Form(""),
     category: str = Form(""),
+    upc: str = Form(""),
     unit_cost: str = Form(""),
     sell_price: str = Form(""),
     unit_size: str = Form(""),
@@ -1092,6 +1104,7 @@ def product_update(
     product.name = name
     product.brand = brand or None
     product.category = category or None
+    product.upc = _clean_upc(upc) or None
     product.unit_cost = float(unit_cost) if unit_cost else None
     product.sell_price = float(sell_price) if sell_price else None
     product.unit_size = unit_size or None
@@ -1379,6 +1392,389 @@ def save_source_from_comparison(
 
 
 # ----------------------------------------------------------------------
+# Phase 1: fast cost entry (bulk grid + CSV import)
+# ----------------------------------------------------------------------
+# The live comparator can't reliably populate costs (Sam's is Akamai-blocked,
+# WebstaurantStore needs a Firecrawl key), so the operator was left with 26 SKUs
+# and 26 blank costs. These two paths let them enter real costs in minutes: an
+# inline bulk grid and a CSV import. Both upsert a ProductSource (default Sam's
+# Club, since that's where the business actually buys) so the saved cost flows
+# straight into the comparator's best-source / margin math.
+
+_BULK_COST_ORIGIN = "bulk_entry"
+
+
+def _supplier_vendor_key(supplier_name: str) -> str:
+    """Map a supplier name back to a known vendor_key so the auto-created
+    Supplier picks up the right type/icon (Sam's Club → local_wholesale)."""
+    return "sams_club" if supplier_name.strip().lower() == "sam's club" else ""
+
+
+@router.post("/costs/bulk")
+async def bulk_costs_save(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    """Save the inline bulk-cost grid: one ProductSource per filled row."""
+    form = await request.form()
+    supplier_name = (str(form.get("supplier_name") or "Sam's Club")).strip() or "Sam's Club"
+    vendor_key = _supplier_vendor_key(supplier_name)
+
+    # Field names are case_price_<id> / pack_<id>; collect the ids present.
+    pids = {k[len("case_price_") :] for k in form if k.startswith("case_price_")}
+    saved = 0
+    for pid_str in pids:
+        pid = _to_int(pid_str)
+        if not pid:
+            continue
+        case_price = _to_float(str(form.get(f"case_price_{pid_str}") or ""))
+        if case_price is None or case_price <= 0:
+            continue  # only filled rows save
+        pack = _to_int(str(form.get(f"pack_{pid_str}") or ""))
+        product = db.get(Product, pid)
+        if not product:
+            continue
+        _upsert_product_source_from_comparison(
+            db,
+            product,
+            vendor_name=supplier_name,
+            vendor_key=vendor_key,
+            case_price=case_price,
+            case_qty=pack,
+            notes="Bulk cost entry",
+            origin=_BULK_COST_ORIGIN,
+        )
+        # Backfill the product's case pack so future rows pre-fill correctly.
+        if pack and not product.case_pack_qty:
+            product.case_pack_qty = pack
+        saved += 1
+
+    db.commit()
+    return RedirectResponse(url=f"/inventory/?tab=products&costs_saved={saved}", status_code=303)
+
+
+# upc is last so it's optional and a bare cost file (sku,case_price,case_pack_qty)
+# still validates; when present it bulk-populates Product.upc for market lookups.
+_COST_CSV_HEADERS = ["sku", "case_price", "case_pack_qty", "upc"]
+
+
+@router.get("/costs/import/template")
+def cost_import_template() -> Response:
+    """Download a starter CSV the operator can fill in or adapt from a Sam's export."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_COST_CSV_HEADERS)
+    writer.writerow(["WATER-16OZ", "18.96", "24", "012000161155"])
+    writer.writerow(["COKE-12OZ", "13.48", "32", ""])
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cost_import_template.csv"},
+    )
+
+
+@router.get("/costs/import", response_class=HTMLResponse)
+def cost_import_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    """Upload form for the cost CSV import."""
+    suppliers = db.query(Supplier).order_by(Supplier.name).all()
+    return templates.TemplateResponse(
+        request,
+        "inventory/cost_import.html",
+        {"active_nav": "inventory", "suppliers": suppliers},
+    )
+
+
+@router.post("/costs/import", response_class=HTMLResponse)
+async def cost_import_run(
+    request: Request,
+    file: UploadFile = File(...),
+    supplier_name: str = Form("Sam's Club"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Parse an uploaded cost CSV and upsert a ProductSource per matched SKU.
+
+    Matches by SKU (case-insensitive) first, then exact product name. Rows that
+    don't match or lack a positive case price are reported back, not silently
+    dropped, so the operator can fix and re-upload.
+    """
+    supplier_name = supplier_name.strip() or "Sam's Club"
+    vendor_key = _supplier_vendor_key(supplier_name)
+
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+
+    reader = csv.DictReader(io.StringIO(text))
+    # Normalize headers to lowercase/stripped so a Sam's-style export with
+    # capitalized columns still maps onto sku/case_price/case_pack_qty.
+    field_map = {(h or "").strip().lower(): h for h in (reader.fieldnames or [])}
+
+    def cell(row: dict, key: str) -> str:
+        src = field_map.get(key)
+        return (row.get(src) or "").strip() if src else ""
+
+    # Index products once for fast lookup by sku and by name.
+    products = db.query(Product).all()
+    by_sku = {p.sku.lower(): p for p in products}
+    by_name = {p.name.lower(): p for p in products}
+
+    saved = 0
+    upcs_set = 0
+    unmatched: list[str] = []
+    skipped: list[str] = []
+    for row in reader:
+        sku = cell(row, "sku")
+        name = cell(row, "name")
+        key = (sku or name).strip()
+        if not key:
+            continue
+        product = by_sku.get(sku.lower()) or by_name.get(name.lower())
+        if not product:
+            unmatched.append(key)
+            continue
+        # A barcode column populates Product.upc in the same pass — set it even
+        # on price-less rows so a UPC-only file is a valid bulk barcode import.
+        upc = _clean_upc(cell(row, "upc"))
+        if upc and product.upc != upc:
+            product.upc = upc
+            upcs_set += 1
+        case_price = _to_float(cell(row, "case_price"))
+        if case_price is None or case_price <= 0:
+            if not upc:  # row did nothing at all
+                skipped.append(key)
+            continue
+        pack = _to_int(cell(row, "case_pack_qty"))
+        _upsert_product_source_from_comparison(
+            db,
+            product,
+            vendor_name=supplier_name,
+            vendor_key=vendor_key,
+            case_price=case_price,
+            case_qty=pack,
+            notes="CSV cost import",
+            origin=_BULK_COST_ORIGIN,
+        )
+        if pack and not product.case_pack_qty:
+            product.case_pack_qty = pack
+        saved += 1
+
+    db.commit()
+    return templates.TemplateResponse(
+        request,
+        "inventory/cost_import_result.html",
+        {
+            "active_nav": "inventory",
+            "saved": saved,
+            "upcs_set": upcs_set,
+            "unmatched": unmatched,
+            "skipped": skipped,
+            "supplier_name": supplier_name,
+        },
+    )
+
+
+# ----------------------------------------------------------------------
+# Sam's Club purchase-history paste import
+# ----------------------------------------------------------------------
+# Sam's blocks server-side price pulls, so actual paid prices come from the
+# operator's own logged-in browser: a no-token bookmarklet on samsclub.com/orders
+# copies the line items to the clipboard, the operator pastes them here (behind
+# the normal Google login), reviews/matches each row to a SKU, and saves the
+# real cost. This replaced the cross-origin /ingest token + Playwright plumbing.
+
+_SAMS_PASTE_ORIGIN = "sams_purchase"
+
+_NAME_STOPWORDS = frozenset(
+    {"oz", "ct", "pk", "pack", "count", "fl", "case", "the", "of", "and", "with"}
+)
+
+
+def _name_tokens(name: str) -> set[str]:
+    """Normalized word set for fuzzy product matching (lowercase, alnum, no units)."""
+    words = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return {w for w in words if w not in _NAME_STOPWORDS and not w.isdigit()}
+
+
+def _best_product_match(line_name: str, products: list[Product]) -> Product | None:
+    """Pick the catalog product whose name shares the most meaningful tokens with
+    the pasted line. Returns None when nothing overlaps (operator picks manually)."""
+    target = _name_tokens(line_name)
+    if not target:
+        return None
+    best: Product | None = None
+    best_score = 0
+    for p in products:
+        overlap = len(target & _name_tokens(p.name))
+        if overlap > best_score:
+            best, best_score = p, overlap
+    return best if best_score > 0 else None
+
+
+@router.get("/costs/sams-paste", response_class=HTMLResponse)
+def sams_paste_page(request: Request) -> HTMLResponse:
+    """Show the paste box + bookmarklet for importing Sam's purchase history."""
+    return templates.TemplateResponse(
+        request,
+        "inventory/sams_paste.html",
+        {"active_nav": "inventory", "ingest_base": str(request.base_url).rstrip("/")},
+    )
+
+
+@router.post("/costs/sams-paste/preview", response_class=HTMLResponse)
+async def sams_paste_preview(
+    request: Request,
+    pasted: str = Form(""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Parse the pasted blob and render a review table with a best-guess SKU
+    match, paid price, and pack qty per line for the operator to confirm."""
+    lines = parse_sams_paste(pasted)
+    products = db.query(Product).order_by(Product.name).all()
+    rows = []
+    for idx, line in enumerate(lines):
+        match = _best_product_match(line.name, products)
+        rows.append(
+            {
+                "idx": idx,
+                "name": line.name,
+                "paid_price": line.paid_price,
+                "qty": line.qty,
+                "match_id": match.id if match else None,
+                "match_name": match.name if match else "",
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "inventory/_sams_paste_review.html",
+        {"rows": rows, "products": products, "parsed_count": len(rows)},
+    )
+
+
+@router.post("/costs/sams-paste/save", response_class=HTMLResponse)
+async def sams_paste_save(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    """Persist the confirmed review rows as Sam's Club ProductSource costs.
+
+    Per row the form carries ``save_<i>`` (checkbox), ``product_<i>`` (chosen
+    SKU), ``price_<i>`` (paid case price) and ``pack_<i>``. Only checked rows
+    with a matched product and a positive price are written.
+    """
+    form = await request.form()
+    idxs = {k[len("save_") :] for k in form if k.startswith("save_")}
+    saved = 0
+    skipped: list[str] = []
+    for i in sorted(idxs, key=lambda s: _to_int(s) or 0):
+        pid = _to_int(str(form.get(f"product_{i}") or ""))
+        price = _to_float(str(form.get(f"price_{i}") or ""))
+        label = str(form.get(f"name_{i}") or f"row {i}")
+        if not pid or price is None or price <= 0:
+            skipped.append(label)
+            continue
+        product = db.get(Product, pid)
+        if not product:
+            skipped.append(label)
+            continue
+        pack = _to_int(str(form.get(f"pack_{i}") or ""))
+        _upsert_product_source_from_comparison(
+            db,
+            product,
+            vendor_name="Sam's Club",
+            vendor_key="sams_club",
+            case_price=price,
+            case_qty=pack,
+            notes="Sam's purchase history (actual paid)",
+            origin=_SAMS_PASTE_ORIGIN,
+        )
+        if pack and not product.case_pack_qty:
+            product.case_pack_qty = pack
+        saved += 1
+    db.commit()
+    return templates.TemplateResponse(
+        request,
+        "inventory/cost_import_result.html",
+        {
+            "active_nav": "inventory",
+            "saved": saved,
+            "unmatched": [],
+            "skipped": skipped,
+            "supplier_name": "Sam's Club",
+        },
+    )
+
+
+# ----------------------------------------------------------------------
+# Market reference (read-only competitor pricing — never a cost)
+# ----------------------------------------------------------------------
+# The comparator's cost side (ProductSource rows) drives margins. This is the
+# *market* side: what other sellers charge for a similar item, gathered from
+# free programmatic sources (UPCitemdb, Open Prices, BLS, eBay). It is display
+# only — nothing here is written as a ProductSource, so it can never inflate or
+# undercut a real cost.
+
+
+@router.post("/compare/market", response_class=HTMLResponse)
+def compare_market(
+    request: Request,
+    product_id: str = Form(""),
+    product_query: str = Form(""),
+    upc: str = Form(""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Gather market-reference prices for a product and render the panel.
+
+    Persists a corrected/entered UPC back onto the product so future lookups
+    skip re-typing it. The barcode keys UPCitemdb/Open Prices; the query keys
+    eBay; the product category keys the BLS backdrop.
+    """
+    product = db.get(Product, _to_int(product_id) or 0) if product_id else None
+    clean_upc = _clean_upc(upc)
+    if product and clean_upc and product.upc != clean_upc:
+        product.upc = clean_upc
+        db.commit()
+
+    query = product_query.strip() or (product.name if product else "")
+    upc_to_use = clean_upc or (product.upc if product else "") or ""
+    category = product.category if product else None
+    refs = gather_market_reference(query=query, upc=upc_to_use, category=category)
+    return templates.TemplateResponse(
+        request,
+        "inventory/_market_reference.html",
+        {"refs": refs, "query": query, "upc": upc_to_use, "product": product},
+    )
+
+
+# Keyless UPCitemdb search is capped at ~100 lookups/day, so cap a single
+# backfill run below that to avoid burning the quota in one click.
+_UPC_FILL_LIMIT = 90
+
+
+@router.post("/upc/fill-missing")
+def fill_missing_upcs(db: Session = Depends(get_db)) -> RedirectResponse:
+    """Auto-populate barcodes for active products that lack one, by resolving each
+    product name through UPCitemdb. Best-effort and reviewable: only fills blanks
+    (never overwrites an operator-set UPC) and is capped per run for the quota.
+    A wrong guess can be corrected on the product form."""
+    todo = (
+        db.query(Product)
+        .filter(Product.is_active.is_(True))
+        .filter((Product.upc.is_(None)) | (Product.upc == ""))
+        .order_by(Product.name)
+        .limit(_UPC_FILL_LIMIT)
+        .all()
+    )
+    filled = 0
+    for p in todo:
+        query = (f"{p.brand} {p.name}".strip() if p.brand else p.name) or ""
+        code = search_upc(query)
+        if code:
+            p.upc = code
+            filled += 1
+    db.commit()
+    return RedirectResponse(
+        url=f"/inventory/?tab=products&upcs_filled={filled}&upcs_scanned={len(todo)}",
+        status_code=303,
+    )
+
+
+# ----------------------------------------------------------------------
 # Inventory v2: bulk + per-row background sourcing
 # ----------------------------------------------------------------------
 # The catalog used to require the operator to open each SKU, click into Find
@@ -1424,7 +1820,7 @@ def _auto_save_best_for_product(db: Session, job_id: int, product_id: int) -> Pr
     if not priced:
         return None
     best = min(priced, key=lambda r: float(r["unit_price"]))
-    _upsert_product_source_from_comparison(
+    src = _upsert_product_source_from_comparison(
         db,
         product,
         vendor_name=best.get("vendor_name") or best.get("vendor_key") or "Unknown",
@@ -1438,14 +1834,14 @@ def _auto_save_best_for_product(db: Session, job_id: int, product_id: int) -> Pr
         origin="comparator_auto",
     )
     db.commit()
-    return None
+    return src
 
 
 def _build_comparison_params(product: Product, vendor_cfg: dict) -> dict:
     """Construct the AgentJob input_params for a single-SKU price comparison."""
     return {
         "product_query": product.name,
-        "vendors": VENDOR_KEYS,
+        "vendors": COMPARATOR_FETCH_KEYS,
         "search_provider": "tavily" if app_settings.tavily_api_key else "duckduckgo",
         "vendor_config": vendor_cfg,
         "product_id": product.id,
@@ -1534,6 +1930,7 @@ def _bulk_source_missing(product_ids: list[int]) -> None:
     The loop is idempotent against re-trigger: any SKU that has gained a
     ProductSource between queueing and execution is skipped.
     """
+    sourced = 0
     for i, pid in enumerate(product_ids, start=1):
         try:
             with Session(engine) as db:
@@ -1552,8 +1949,11 @@ def _bulk_source_missing(product_ids: list[int]) -> None:
                 job_id = job.id
             price_comparator.run_price_comparison_job(job_id)
             with Session(engine) as db:
-                _auto_save_best_for_product(db, job_id, pid)
+                saved = _auto_save_best_for_product(db, job_id, pid)
+                if saved is not None:
+                    sourced += 1
                 _set_setting(db, "bulk_sourcing_done", str(i))
+                _set_setting(db, "bulk_sourcing_sourced", str(sourced))
         except Exception:  # noqa: BLE001 — bulk loop must not die on one SKU
             logger.exception("Bulk source: failed on product_id=%s", pid)
             with Session(engine) as db:
@@ -1586,6 +1986,7 @@ def source_missing_run(
 
     _set_setting(db, "bulk_sourcing_total", str(len(unsourced_ids)))
     _set_setting(db, "bulk_sourcing_done", "0")
+    _set_setting(db, "bulk_sourcing_sourced", "0")
     _set_setting(db, "bulk_sourcing_in_progress", "1")
     background_tasks.add_task(_bulk_source_missing, unsourced_ids)
     return RedirectResponse(url="/inventory/?tab=products", status_code=303)
@@ -1593,18 +1994,53 @@ def source_missing_run(
 
 @router.get("/bulk-source/status", response_class=HTMLResponse)
 def source_missing_status(db: Session = Depends(get_db)) -> HTMLResponse:
-    """Live progress strip for the bulk-source run. Idle = empty div."""
+    """Live progress strip for the bulk-source run.
+
+    While running: a progress bar with "X of Y done · Z priced". When a run has
+    just finished: a one-line summary (shown once, then consumed so a later page
+    load is clean). Otherwise an empty div.
+    """
     active = _get_setting(db, "bulk_sourcing_in_progress", "") == "1"
+
+    def _int(key: str) -> int:
+        try:
+            return int(_get_setting(db, key, "0") or 0)
+        except ValueError:
+            return 0
+
+    done = _int("bulk_sourcing_done")
+    total = _int("bulk_sourcing_total")
+    sourced = _int("bulk_sourcing_sourced")
+
     if not active:
+        # A finished run leaves total>0 until its summary is shown once here.
+        if total > 0:
+            _set_setting(db, "bulk_sourcing_total", "0")  # consume — clean on reload
+            empty = total - sourced
+            tail = (
+                '<a href="/inventory/?tab=products#bulkCosts" '
+                'class="alert-link" data-bs-toggle="collapse" data-bs-target="#bulkCosts">'
+                "enter those costs manually</a>"
+                if empty > 0
+                else "all set"
+            )
+            note = (
+                f' <span class="text-muted">{empty} came back empty — {tail}.</span>'
+                if empty > 0
+                else ""
+            )
+            return HTMLResponse(
+                f'<div id="bulk-source-strip" '
+                f'class="alert alert-success py-2 small mb-3 d-flex align-items-center gap-2">'
+                f'<i class="bi bi-check2-circle"></i>'
+                f"<span><strong>Sourcing complete.</strong> "
+                f"Saved a price for {sourced} of {total} SKUs.{note}</span>"
+                f'<button type="button" class="btn-close ms-auto" style="font-size:.6rem" '
+                f'data-bs-dismiss="alert" aria-label="Dismiss"></button>'
+                f"</div>"
+            )
         return HTMLResponse('<div id="bulk-source-strip"></div>')
-    try:
-        done = int(_get_setting(db, "bulk_sourcing_done", "0") or 0)
-    except ValueError:
-        done = 0
-    try:
-        total = int(_get_setting(db, "bulk_sourcing_total", "0") or 0)
-    except ValueError:
-        total = 0
+
     pct = (done / total * 100) if total else 0
     return HTMLResponse(
         f'<div id="bulk-source-strip" '
@@ -1613,7 +2049,7 @@ def source_missing_status(db: Session = Depends(get_db)) -> HTMLResponse:
         f'class="alert alert-info py-2 small mb-3 d-flex align-items-center gap-2">'
         f'<span class="spinner-border spinner-border-sm text-primary"></span>'
         f"<strong>Sourcing missing prices…</strong>"
-        f'<span class="text-muted">{done} of {total} SKUs done</span>'
+        f'<span class="text-muted">{done} of {total} SKUs done · {sourced} priced</span>'
         f'<div class="progress flex-grow-1" style="height:6px">'
         f'<div class="progress-bar" role="progressbar" style="width: {pct:.0f}%"></div>'
         f"</div></div>"

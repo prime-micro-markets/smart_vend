@@ -1,0 +1,99 @@
+{# Bulk cost entry — collapsible editor above the catalog table. Enter a case
+   price + pack qty per SKU; one Save-all upserts a ProductSource (default
+   Sam's Club) for every row you filled. The fast path to clearing missing
+   costs without per-product clicks or any scraping. #}
+<div class="collapse mb-3" id="bulkCosts">
+  <div class="card border-success border-opacity-50">
+    <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+      <h6 class="mb-0"><i class="bi bi-table me-1"></i>Bulk cost entry</h6>
+      <small class="text-muted">Enter case price + pack; unit cost computes live. Only filled rows save.</small>
+    </div>
+    <div class="card-body">
+      <form method="post" action="/inventory/costs/bulk">
+        <div class="row g-2 align-items-end mb-2">
+          <div class="col-auto">
+            <label class="form-label small mb-1">Save these costs under supplier</label>
+            <select name="supplier_name" class="form-select form-select-sm">
+              <option value="Sam's Club" selected>Sam's Club</option>
+              {% for s in suppliers %}{% if s.name != "Sam's Club" %}
+              <option value="{{ s.name }}">{{ s.name }}</option>
+              {% endif %}{% endfor %}
+            </select>
+          </div>
+          <div class="col text-muted small">
+            Buying everything at Sam's? Leave it as is. Costs feed the comparator and your margins.
+          </div>
+        </div>
+
+        <div class="table-responsive" style="max-height:460px;overflow-y:auto">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light position-sticky top-0">
+              <tr class="small text-muted">
+                <th class="d-none d-sm-table-cell">SKU</th>
+                <th>Name</th>
+                <th class="text-end">Current unit</th>
+                <th style="width:120px">Case $</th>
+                <th style="width:90px">Pack</th>
+                <th class="text-end" style="width:90px">New unit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in products %}
+              {% set bs = p.best_source %}
+              <tr>
+                <td class="small font-monospace text-muted d-none d-sm-table-cell">{{ p.sku }}</td>
+                <td class="small">{{ p.name }}</td>
+                <td class="text-end small text-muted">
+                  {{ "$%.3f"|format(p.effective_cost) if p.effective_cost is not none else "—" }}
+                </td>
+                <td>
+                  <input type="number" step="0.01" min="0" inputmode="decimal"
+                         name="case_price_{{ p.id }}" data-pid="{{ p.id }}"
+                         class="form-control form-control-sm bulk-case"
+                         value="{{ "%.2f"|format(bs.case_price) if bs and bs.case_price else "" }}"
+                         placeholder="e.g. 18.96">
+                </td>
+                <td>
+                  <input type="number" step="1" min="1" inputmode="numeric"
+                         name="pack_{{ p.id }}" data-pid="{{ p.id }}"
+                         class="form-control form-control-sm bulk-pack"
+                         value="{{ bs.case_pack_qty or p.case_pack_qty or "" }}"
+                         placeholder="qty">
+                </td>
+                <td class="text-end small fw-semibold"><span id="bulk-unit-{{ p.id }}">—</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="d-flex justify-content-end mt-2">
+          <button type="submit" class="btn btn-success btn-sm">
+            <i class="bi bi-save me-1"></i>Save all costs
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  function recalc(pid) {
+    var c = parseFloat(document.querySelector('input[name="case_price_' + pid + '"]').value);
+    var p = parseFloat(document.querySelector('input[name="pack_' + pid + '"]').value);
+    var el = document.getElementById('bulk-unit-' + pid);
+    if (el && c > 0 && p > 0) {
+      el.textContent = '$' + (c / p).toFixed(3);
+      el.classList.add('text-success');
+    } else if (el) {
+      el.textContent = '—';
+      el.classList.remove('text-success');
+    }
+  }
+  document.querySelectorAll('.bulk-case, .bulk-pack').forEach(function (i) {
+    i.addEventListener('input', function () { recalc(this.dataset.pid); });
+  });
+  document.querySelectorAll('.bulk-case').forEach(function (i) { recalc(i.dataset.pid); });
+})();
+</script>

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Cost import results – Prime Vending{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb small">
+    <li class="breadcrumb-item"><a href="/inventory/?tab=products">Inventory</a></li>
+    <li class="breadcrumb-item"><a href="/inventory/costs/import">Import costs</a></li>
+    <li class="breadcrumb-item active">Results</li>
+  </ol>
+</nav>
+
+<h1 class="h4 mb-3"><i class="bi bi-check2-circle me-2 text-success"></i>Cost import complete</h1>
+
+<div class="alert alert-success py-2 px-3">
+  Saved costs for <strong>{{ saved }}</strong> product(s) under
+  <strong>{{ supplier_name }}</strong>.
+  {% if upcs_set %}<br><i class="bi bi-upc-scan me-1"></i>Also set <strong>{{ upcs_set }}</strong> UPC(s) from the <code>upc</code> column.{% endif %}
+</div>
+
+{% if skipped %}
+<div class="alert alert-warning py-2 px-3 small">
+  <strong>{{ skipped | length }}</strong> row(s) skipped (no positive case price):
+  {{ skipped | join(", ") }}
+</div>
+{% endif %}
+
+{% if unmatched %}
+<div class="alert alert-danger py-2 px-3 small">
+  <strong>{{ unmatched | length }}</strong> row(s) didn't match any SKU or product name:
+  {{ unmatched | join(", ") }}
+  <div class="mt-1 text-muted">Fix the SKU/name in your file and re-upload just those rows.</div>
+</div>
+{% endif %}
+
+<a href="/inventory/?tab=products" class="btn btn-primary btn-sm">
+  <i class="bi bi-arrow-left me-1"></i>Back to catalog
+</a>
+<a href="/inventory/costs/import" class="btn btn-outline-secondary btn-sm">Import another file</a>
+{% endblock %}

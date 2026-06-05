@@ -91,12 +91,12 @@ def _items_from_html(soup: BeautifulSoup) -> list[dict]:
     raw: list[dict] = []
 
     # Strategy 1: data attributes on product wrappers
-    for card in soup.select("[data-testid='product-card'], .product-card, .product-box, [data-product-id]"):
-        name_el = (
-            card.select_one("[data-testid='product-name'], .product-title, h2, h3, .name")
-        )
-        price_el = (
-            card.select_one("[data-testid='product-price'], .product-price, .price, .sale-price")
+    for card in soup.select(
+        "[data-testid='product-card'], .product-card, .product-box, [data-product-id]"
+    ):
+        name_el = card.select_one("[data-testid='product-name'], .product-title, h2, h3, .name")
+        price_el = card.select_one(
+            "[data-testid='product-price'], .product-price, .price, .sale-price"
         )
         link_el = card.select_one("a[href]")
 
@@ -114,11 +114,13 @@ def _items_from_html(soup: BeautifulSoup) -> list[dict]:
             price_el = el.select_one(".price, .cost, [class*='price']")
             link_el = el.select_one("a[href]")
             if name_el:
-                raw.append({
-                    "name": name_el.get_text(strip=True),
-                    "price_text": price_el.get_text(strip=True) if price_el else "",
-                    "href": link_el["href"] if link_el else "",
-                })
+                raw.append(
+                    {
+                        "name": name_el.get_text(strip=True),
+                        "price_text": price_el.get_text(strip=True) if price_el else "",
+                        "href": link_el["href"] if link_el else "",
+                    }
+                )
 
     return raw
 
@@ -144,7 +146,7 @@ def search_products(
         return fc
 
     try:
-        with httpx.Client(timeout=20, follow_redirects=True, verify=False) as client:
+        with httpx.Client(timeout=10, follow_redirects=True, verify=False) as client:
             r = client.get(
                 _SEARCH_URL,
                 params={"term": query, "type": "product"},

@@ -72,12 +72,8 @@ def search_products(
             break
 
     for card in cards[:max_results]:
-        name_el = card.select_one(
-            "h2, h3, h4, .product-name, .product-title, .item-name, a[title]"
-        )
-        price_el = card.select_one(
-            ".price, .product-price, .item-price, [class*='price'], .amount"
-        )
+        name_el = card.select_one("h2, h3, h4, .product-name, .product-title, .item-name, a[title]")
+        price_el = card.select_one(".price, .product-price, .item-price, [class*='price'], .amount")
         link_el = card.select_one("a[href]")
 
         name = ""

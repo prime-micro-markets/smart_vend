@@ -12,7 +12,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _CATALOG_URL = "https://vendguys.com/collections/machines/products.json?limit=250"
-_CANTALOUPE_URL = "https://store.cantaloupe.com/collections/coolers-and-freezers/products.json?limit=250"
+_CANTALOUPE_URL = (
+    "https://store.cantaloupe.com/collections/coolers-and-freezers/products.json?limit=250"
+)
 _SSL_VERIFY = False  # Windows Python can't verify Shopify's intermediate CA via certifi
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -50,14 +52,16 @@ def _shopify_products(url: str, base_product_url: str) -> list[VGProduct]:
         body_text = _strip_html(body_html)
 
         handle = p.get("handle", "")
-        result.append(VGProduct(
-            title=p.get("title", ""),
-            handle=handle,
-            page_url=f"{base_product_url}{handle}",
-            image_url=image_url,
-            price=price,
-            body_text=body_text,
-        ))
+        result.append(
+            VGProduct(
+                title=p.get("title", ""),
+                handle=handle,
+                page_url=f"{base_product_url}{handle}",
+                image_url=image_url,
+                price=price,
+                body_text=body_text,
+            )
+        )
 
     return result
 

@@ -64,6 +64,17 @@
   {% endif %}
 </div>
 
+{# Market reference — read-only competitor pricing, kept visually separate from
+   the cost candidates above. Loads on demand (no auto HTTP) when the operator
+   clicks Check. Only meaningful for a bound product. #}
+{% if target_product and job.status == 'done' %}
+<div id="market-ref" class="mt-4">
+  {% with product=target_product, query=input_params.get('product_query', target_product.name), upc=target_product.upc %}
+  {% include "inventory/_market_reference.html" %}
+  {% endwith %}
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}

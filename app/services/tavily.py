@@ -27,7 +27,9 @@ def _get_client() -> Any:
 def search(query: str, max_results: int = 5) -> list[dict[str, Any]]:
     """Search the web via Tavily. Returns list of {title, url, content, score} dicts."""
     client = _get_client()
-    response = client.search(query=query, max_results=max_results)
+    # Bounded timeout so a stalled request can't hang the price-comparison job
+    # (the tavily client passes this through to its underlying httpx call).
+    response = client.search(query=query, max_results=max_results, timeout=8)
     return [
         {
             "title": r.get("title", ""),

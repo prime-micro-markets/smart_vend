@@ -96,8 +96,12 @@ def _build_projection(
         initial_inventory_cost=initial_inventory_cost,
     )
     fixed_monthly_opex = (
-        restock_labor_monthly + supplies_monthly + insurance_monthly
-        + other_opex_monthly + connectivity_monthly + software_monthly
+        restock_labor_monthly
+        + supplies_monthly
+        + insurance_monthly
+        + other_opex_monthly
+        + connectivity_monthly
+        + software_monthly
     )
     unit_econ = calc_unit_economics(
         avg_ticket_usd=avg_ticket_usd,

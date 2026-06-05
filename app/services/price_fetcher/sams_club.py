@@ -1,4 +1,15 @@
-"""Sam's Club price fetcher via their internal BFF API (no scraping required)."""
+"""Sam's Club price parsing for the internal "Vivaldi" BFF payload.
+
+Sam's product/pricing endpoints sit behind Akamai bot protection, which a
+plain server-side request from a datacenter IP (Render) cannot clear — so the
+app does not fetch these directly in the comparator. In production, Sam's costs
+come from the operator pasting their own purchase history (Inventory → "Paste
+Sam's purchases"), which carries the actual paid price and needs no BFF call.
+
+:func:`parse_products_payload` and the thin :func:`search_products` caller
+remain for local testing only (where the host IP isn't blocked); neither is
+wired into the live comparator dispatch.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +18,11 @@ import re
 import httpx
 
 from app.services.price_fetcher.models import FetchError, PriceResult
+
+# The browser path (bookmarklet / Playwright helper) hits this same endpoint
+# from the samsclub.com origin so it inherits the member session + Akamai
+# clearance. Kept here as the single source of truth for the request shape.
+PRODUCT_SEARCH_PATH = "/api/node/vivaldi/browse/v2/products/search"
 
 # Sam's Club sometimes returns prices as strings ("$1.98", "1.98 each"). Strip
 # currency markers and qualifiers before float coercion so the parse doesn't
@@ -26,36 +42,8 @@ _HEADERS = {
     "X-Enable-Personalization": "false",
 }
 
-_CLUB_SEARCH = "https://www.samsclub.com/api/node/vivaldi/v2/clubs/search"
-_PRODUCT_SEARCH = "https://www.samsclub.com/api/node/vivaldi/browse/v2/products/search"
+_PRODUCT_SEARCH = f"https://www.samsclub.com{PRODUCT_SEARCH_PATH}"
 _BASE_URL = "https://www.samsclub.com"
-
-
-def lookup_club_by_zip(zip_code: str) -> dict | None:
-    """Return nearest Sam's Club dict with keys: id, city, address1, distance."""
-    try:
-        with httpx.Client(timeout=10, follow_redirects=True, verify=False) as client:
-            r = client.get(
-                _CLUB_SEARCH,
-                params={"zip": zip_code.strip(), "distance": "50"},
-                headers=_HEADERS,
-            )
-            r.raise_for_status()
-            data = r.json()
-        clubs = data.get("payload", [])
-        if clubs and isinstance(clubs, list):
-            c = clubs[0]
-            return {
-                "id": str(c.get("id", "")),
-                "name": f"Sam's Club #{c.get('id', '')} – {c.get('city', '')}",
-                "city": c.get("city", ""),
-                "state": c.get("stateProvince", ""),
-                "address": c.get("address1", ""),
-                "distance_miles": round(float(c.get("distance", 0)), 1),
-            }
-    except Exception as exc:
-        raise FetchError(f"Sam's Club club lookup failed: {exc}") from exc
-    return None
 
 
 def _coerce_price(val: object) -> float | None:
@@ -127,37 +115,29 @@ def _parse_unit_size(rec: dict) -> str | None:
     return None
 
 
-def search_products(
-    query: str,
+def parse_products_payload(
+    data: dict,
     club_id: str,
     max_results: int = 6,
 ) -> list[PriceResult]:
-    try:
-        with httpx.Client(timeout=15, follow_redirects=True, verify=False) as client:
-            r = client.get(
-                _PRODUCT_SEARCH,
-                params={
-                    "searchTerm": query,
-                    "clubId": club_id,
-                    "pageSize": str(max_results),
-                    "sortKey": "relevance",
-                    "sortOrder": "1",
-                    "offset": "0",
-                    "json": "true",
-                },
-                headers=_HEADERS,
-            )
-            r.raise_for_status()
-            data = r.json()
-    except Exception as exc:
-        raise FetchError(f"Sam's Club product search failed: {exc}") from exc
+    """Turn a raw Vivaldi products/search response into PriceResult rows.
 
-    records = data.get("payload", {}).get("records", [])
-    if not records and isinstance(data.get("payload"), list):
-        records = data["payload"]
+    Used by the server-side ``search_products`` for local testing. It accepts
+    the full decoded JSON payload — the records can live under
+    ``payload.records`` or directly under ``payload`` depending on API version.
+    """
+    payload = data.get("payload") if isinstance(data, dict) else None
+    if isinstance(payload, dict):
+        records = payload.get("records", [])
+    elif isinstance(payload, list):
+        records = payload
+    else:
+        records = []
 
     results: list[PriceResult] = []
     for rec in records[:max_results]:
+        if not isinstance(rec, dict):
+            continue
         name = (
             rec.get("skuDisplayName") or rec.get("productName") or rec.get("name") or ""
         ).strip()
@@ -194,3 +174,34 @@ def search_products(
             )
         )
     return results
+
+
+def search_products(
+    query: str,
+    club_id: str,
+    max_results: int = 6,
+) -> list[PriceResult]:
+    """Server-side BFF search. Not used by the live comparator (Akamai blocks
+    datacenter IPs); kept for local testing and as the canonical request shape
+    the browser-side capture path mirrors."""
+    try:
+        with httpx.Client(timeout=15, follow_redirects=True, verify=False) as client:
+            r = client.get(
+                _PRODUCT_SEARCH,
+                params={
+                    "searchTerm": query,
+                    "clubId": club_id,
+                    "pageSize": str(max_results),
+                    "sortKey": "relevance",
+                    "sortOrder": "1",
+                    "offset": "0",
+                    "json": "true",
+                },
+                headers=_HEADERS,
+            )
+            r.raise_for_status()
+            data = r.json()
+    except Exception as exc:
+        raise FetchError(f"Sam's Club product search failed: {exc}") from exc
+
+    return parse_products_payload(data, club_id, max_results=max_results)

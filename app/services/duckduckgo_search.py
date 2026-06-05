@@ -12,11 +12,12 @@ def search(query: str, max_results: int = 5) -> list[dict[str, Any]]:
         try:
             from duckduckgo_search import DDGS  # type: ignore[import-untyped]
         except ImportError as exc:
-            raise RuntimeError(
-                "ddgs not installed. Run: pip install ddgs"
-            ) from exc
+            raise RuntimeError("ddgs not installed. Run: pip install ddgs") from exc
     results: list[dict[str, Any]] = []
-    with DDGS() as ddgs:
+    # An explicit timeout keeps a stalled connection (e.g. a local proxy/SSL
+    # interception that never completes the TLS handshake) from hanging the
+    # whole price-comparison job. Without it ddgs waits indefinitely.
+    with DDGS(timeout=8) as ddgs:
         for r in ddgs.text(query, max_results=max_results):
             results.append(
                 {

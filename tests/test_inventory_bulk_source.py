@@ -64,6 +64,26 @@ def test_bulk_source_status_idle_returns_empty(client: TestClient) -> None:
     assert "Sourcing" not in resp.text  # nothing in flight
 
 
+def test_bulk_source_status_shows_completion_summary_once(client: TestClient, db: Session) -> None:
+    """A finished run (not in progress, counters left set) renders a one-line
+    completion summary, then consumes it so a later page load is clean."""
+    db.add(AppSetting(key="bulk_sourcing_in_progress", value=""))
+    db.add(AppSetting(key="bulk_sourcing_total", value="5"))
+    db.add(AppSetting(key="bulk_sourcing_done", value="5"))
+    db.add(AppSetting(key="bulk_sourcing_sourced", value="2"))
+    db.commit()
+
+    resp = client.get("/inventory/bulk-source/status")
+    assert resp.status_code == 200
+    assert "Sourcing complete" in resp.text
+    assert "2 of 5" in resp.text
+    assert "came back empty" in resp.text  # 3 empty -> manual entry prompt
+
+    # Consumed: total reset to 0, so the next fetch is the empty container.
+    resp2 = client.get("/inventory/bulk-source/status")
+    assert "Sourcing complete" not in resp2.text
+
+
 def test_bulk_source_run_skips_when_already_in_progress(client: TestClient, db: Session) -> None:
     """Idempotent against double-click — second POST is a no-op."""
     db.add(AppSetting(key="bulk_sourcing_in_progress", value="1"))
@@ -132,9 +152,9 @@ def test_auto_save_picks_cheapest_primary_skips_referrals(db: Session) -> None:
         draft_body=json.dumps(
             [
                 {
-                    "vendor_key": "sams_club",
-                    "vendor_name": "Sam's Club",
-                    "vendor_type": "local_wholesale",
+                    "vendor_key": "candy_machines",
+                    "vendor_name": "CandyMachines",
+                    "vendor_type": "online_vending",
                     "product_name": "Item A 24-pack",
                     "unit_price": 1.20,
                     "case_price": None,
@@ -142,9 +162,9 @@ def test_auto_save_picks_cheapest_primary_skips_referrals(db: Session) -> None:
                     "source": "api",
                 },
                 {
-                    "vendor_key": "walmart",
-                    "vendor_name": "Walmart",
-                    "vendor_type": "local_retail",
+                    "vendor_key": "webstaurantstore",
+                    "vendor_name": "WebstaurantStore",
+                    "vendor_type": "online_wholesale",
                     "product_name": "Item A",
                     "unit_price": 0.99,
                     "source": "scrape",
@@ -167,7 +187,7 @@ def test_auto_save_picks_cheapest_primary_skips_referrals(db: Session) -> None:
     db.refresh(p)
     assert len(p.sources) == 1
     saved = p.sources[0]
-    assert saved.supplier.name == "Walmart"
+    assert saved.supplier.name == "WebstaurantStore"
     assert saved.unit_cost == 0.99
     assert saved.origin == "comparator_auto"
 

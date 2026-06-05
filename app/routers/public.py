@@ -51,7 +51,10 @@ async def contact(
             # No mail transport configured — log the lead so it isn't lost.
             logger.warning(
                 "Contact form received but email not configured: %s %s <%s> / %s",
-                first_name, last_name, email, company,
+                first_name,
+                last_name,
+                email,
+                company,
             )
             sent = True
     except Exception:
@@ -63,9 +66,7 @@ async def contact(
     # HTMX submit → return just the result banner fragment. Always 200 so
     # htmx performs the swap; the fragment itself conveys success/error.
     if request.headers.get("HX-Request") == "true":
-        return templates.TemplateResponse(
-            request, "public/_contact_result.html", ctx
-        )
+        return templates.TemplateResponse(request, "public/_contact_result.html", ctx)
 
     # Non-JS fallback → full page reload with success/error block
     return templates.TemplateResponse(

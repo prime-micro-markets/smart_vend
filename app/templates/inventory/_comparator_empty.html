@@ -1,0 +1,31 @@
+{# Empty / blocked terminal state for a finished comparison.
+   Expects `network_blocked` (bool) in context; `target_product` optional.
+   Always offers the reliable manual cost paths so the operator is never stuck. #}
+<div class="text-center py-4">
+  {% if network_blocked %}
+  <i class="bi bi-wifi-off fs-2 d-block mb-2 text-warning"></i>
+  <p class="mb-1"><strong>Couldn't reach the vendor sites.</strong></p>
+  <p class="text-muted small mb-3 mx-auto" style="max-width:430px">
+    The web price lookup runs on the live site (primemicromarkets.com). On a local or
+    dev machine, outbound requests are normally blocked, so nothing comes back here.
+    Enter costs directly instead:
+  </p>
+  {% else %}
+  <i class="bi bi-search fs-2 d-block mb-2 text-muted"></i>
+  <p class="mb-1">No prices found for this product.</p>
+  <p class="text-muted small mb-3 mx-auto" style="max-width:430px">
+    Try a shorter or different product name, or just enter the cost directly:
+  </p>
+  {% endif %}
+  <div class="d-flex gap-2 justify-content-center flex-wrap">
+    <a href="/inventory/?tab=products" class="btn btn-sm btn-outline-success">
+      <i class="bi bi-table me-1"></i>Bulk Costs
+    </a>
+    <a href="/inventory/costs/sams-paste" class="btn btn-sm btn-outline-primary">
+      <i class="bi bi-clipboard-check me-1"></i>Paste Sam's
+    </a>
+    <a href="/inventory/costs/import" class="btn btn-sm btn-outline-success">
+      <i class="bi bi-filetype-csv me-1"></i>Import CSV
+    </a>
+  </div>
+</div>

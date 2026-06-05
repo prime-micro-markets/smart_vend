@@ -67,10 +67,17 @@
   <div class="collapse {% if is_edit %}show{% endif %} mt-2" id="productExtraFields">
     <div class="card card-body bg-light border-0">
       <div class="row g-2">
-        <div class="col-md-6">
+        <div class="col-md-3">
           <label class="form-label small fw-semibold">Brand</label>
           <input type="text" name="brand" class="form-control form-control-sm"
                  value="{{ product.brand or '' if is_edit else '' }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">UPC / Barcode</label>
+          <input type="text" name="upc" class="form-control form-control-sm" inputmode="numeric"
+                 value="{{ product.upc or '' if is_edit else '' }}"
+                 placeholder="optional — for market lookups">
+          <div class="form-text">Powers price-reference lookups. Auto-fillable in bulk.</div>
         </div>
         <div class="col-md-3">
           <label class="form-label small fw-semibold">Unit Size</label>

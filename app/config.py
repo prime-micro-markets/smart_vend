@@ -4,9 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # extra="ignore" so stray/retired env vars (e.g. the removed Sheets keys) on a
     # host or in .env don't crash startup with "extra inputs not permitted".
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "sqlite:///./smart_vend.db"
     debug: bool = False
@@ -18,6 +16,18 @@ class Settings(BaseSettings):
     # Firecrawl — structured web scraping for price comparison & equipment images.
     # When unset, scrapers fall back to BeautifulSoup HTML parsing.
     firecrawl_api_key: str = ""
+
+    # Market-reference pricing (read-only "what competitors sell similar items
+    # for"; never feeds cost/margin math). All optional — each source degrades to
+    # "no data" when its key is missing.
+    #   • UPCitemdb: barcode → price band. The keyless trial endpoint works at
+    #     100 lookups/day; a paid key raises the limit and is used when set.
+    #   • eBay Browse: live/sold listings for similar items (OAuth client creds).
+    #   • BLS: regional/national average price for a few tracked categories.
+    upcitemdb_api_key: str = ""
+    ebay_client_id: str = ""
+    ebay_client_secret: str = ""
+    bls_api_key: str = ""
     gmail_user: str = ""
     gmail_app_password: str = ""
     # Google Calendar "Appointment Schedule" public booking page URL. The chatbot

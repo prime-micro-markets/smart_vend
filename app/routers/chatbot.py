@@ -86,9 +86,15 @@ def chatbot_submit_lead(
             status_code=422,
         )
     from app.services.cs_chatbot_agent import _handle_capture_lead
+
     _handle_capture_lead(
-        {"name": name, "email": email, "phone": phone,
-         "location": location, "description": description},
+        {
+            "name": name,
+            "email": email,
+            "phone": phone,
+            "location": location,
+            "description": description,
+        },
         session_id.strip() or "widget-form",
         db,
     )
@@ -100,8 +106,8 @@ def chatbot_submit_lead(
         '<button type="button" onclick="hideCallbackForm()" '
         'style="background:none;border:1px solid #dee2e6;border-radius:6px;'
         'padding:4px 14px;font-size:.78rem;cursor:pointer;color:#6c757d;">'
-        'Back to Chat</button>'
-        '</div>'
+        "Back to Chat</button>"
+        "</div>"
     )
 
 

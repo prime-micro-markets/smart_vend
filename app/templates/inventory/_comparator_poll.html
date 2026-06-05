@@ -108,6 +108,10 @@
 {% endfor %}
 
 {% if primary_results %}
+<h6 class="small fw-semibold text-body-secondary mb-1">
+  <i class="bi bi-cash-coin me-1"></i>Supplier cost candidates
+  <span class="fw-normal text-muted">— these are buy-side costs; save any row onto the product. (Market reference is separate, below.)</span>
+</h6>
 <div class="table-responsive">
   <table class="table table-sm table-hover align-middle">
     <thead class="table-light small">
@@ -132,6 +136,10 @@
             <span class="fw-medium">{{ r.vendor_name }}</span>
             {% if is_best %}
             <span class="badge bg-success ms-1" style="font-size:.65rem">Best</span>
+            {% endif %}
+            {% if meta.get('weak') %}
+            <span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1" style="font-size:.6rem"
+                  title="Weak sourcing: approximate or unreliable pricing — verify before ordering">weak</span>
             {% endif %}
           </span>
           {% if r.notes %}
@@ -213,7 +221,8 @@
 <div class="text-muted small mt-1">
   <i class="bi bi-info-circle me-1"></i>
   <strong>API</strong> = direct vendor API · <strong>Live</strong> = real-time page scrape ·
-  <strong>AI Est.</strong> = AI-assisted web search fallback (verify before ordering)
+  <strong>AI Est.</strong> = AI-assisted web search fallback (verify before ordering) ·
+  <span class="badge bg-warning-subtle text-warning border border-warning-subtle" style="font-size:.6rem">weak</span> = approximate/unreliable source
 </div>
 {% endif %}
 
@@ -310,17 +319,11 @@
 {% endif %}
 
 {% if not primary_results and not referral_results %}
-<div class="text-center text-muted py-4">
-  <i class="bi bi-search fs-2 d-block mb-2"></i>
-  No prices found. Try a different product name or check vendor settings.
-</div>
+{% include "inventory/_comparator_empty.html" %}
 {% endif %}
 
 {% else %}
-<div class="text-center text-muted py-4">
-  <i class="bi bi-search fs-2 d-block mb-2"></i>
-  No prices found. Try a different product name or check vendor settings.
-</div>
+{% include "inventory/_comparator_empty.html" %}
 {% endif %}
 
 {% endif %}

@@ -15,16 +15,12 @@ _OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
 # Map internal brand key → OSM brand tag value
 _BRAND_TAGS = {
-    "walmart": "Walmart",
     "sams_club": "Sam's Club",
 }
 
 
 def geocode_zip(zip_code: str) -> tuple[float, float] | tuple[None, None]:
-    url = (
-        f"{_NOMINATIM_URL}?postalcode={zip_code.strip()}"
-        f"&country=US&format=json&limit=1"
-    )
+    url = f"{_NOMINATIM_URL}?postalcode={zip_code.strip()}&country=US&format=json&limit=1"
     req = urllib.request.Request(url, headers={"User-Agent": "PrimeMM/1.0"})
     with urllib.request.urlopen(req, context=_CTX, timeout=10) as resp:
         data = json.loads(resp.read().decode())
@@ -35,20 +31,15 @@ def geocode_zip(zip_code: str) -> tuple[float, float] | tuple[None, None]:
 
 def _overpass_query(query: str, timeout: int = 30) -> list[dict]:
     data = urllib.parse.urlencode({"data": query}).encode()
-    req = urllib.request.Request(
-        _OVERPASS_URL, data=data, headers={"User-Agent": "PrimeMM/1.0"}
-    )
+    req = urllib.request.Request(_OVERPASS_URL, data=data, headers={"User-Agent": "PrimeMM/1.0"})
     with urllib.request.urlopen(req, context=_CTX, timeout=timeout + 5) as resp:
         return json.loads(resp.read().decode()).get("elements", [])
 
 
 def _extract_store_id(website: str, brand: str) -> str:
-    if brand == "walmart":
-        m = re.search(r"/store/(\d+)", website)
-        return m.group(1) if m else ""
-    else:  # sams_club
-        m = re.search(r"/club/[^/]+/(\d+)", website)
-        return m.group(1) if m else ""
+    # Sam's Club store URLs look like /club/<slug>/<id>.
+    m = re.search(r"/club/[^/]+/(\d+)", website)
+    return m.group(1) if m else ""
 
 
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -68,7 +59,7 @@ def find_stores(zip_code: str, brand: str, radius_km: int = 100) -> list[dict]:
 
     Args:
         zip_code: US ZIP code
-        brand: 'walmart' or 'sams_club'
+        brand: 'sams_club'
         radius_km: Search radius in kilometers
 
     Returns:
@@ -87,8 +78,8 @@ def find_stores(zip_code: str, brand: str, radius_km: int = 100) -> list[dict]:
 
     q = (
         f"[out:json][timeout:25];"
-        f"(node[\"brand\"=\"{brand_tag}\"](around:{radius_m},{lat},{lon});"
-        f"way[\"brand\"=\"{brand_tag}\"](around:{radius_m},{lat},{lon}););"
+        f'(node["brand"="{brand_tag}"](around:{radius_m},{lat},{lon});'
+        f'way["brand"="{brand_tag}"](around:{radius_m},{lat},{lon}););'
         f"out center tags;"
     )
 

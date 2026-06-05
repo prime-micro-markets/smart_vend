@@ -142,22 +142,20 @@ def leads_jobs_list(request: Request, db: Session = Depends(get_db)) -> HTMLResp
         .all()
     )
     return templates.TemplateResponse(
-        request, "leads/_job_history.html", {"jobs": jobs, "prospect_names": _prospect_names(db, jobs)}
+        request,
+        "leads/_job_history.html",
+        {"jobs": jobs, "prospect_names": _prospect_names(db, jobs)},
     )
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
-def leads_job_status(
-    job_id: int, request: Request, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def leads_job_status(job_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     job = db.get(AgentJob, job_id)
     if not job:
         return Response(status_code=404)
     prospects_list: list[Prospect] = []
     if job.status == "done" and job.job_type == "research":
-        prospects_list = (
-            db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
-        )
+        prospects_list = db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
     return templates.TemplateResponse(
         request,
         "leads/job_status.html",
@@ -166,17 +164,13 @@ def leads_job_status(
 
 
 @router.get("/jobs/{job_id}/poll", response_class=HTMLResponse)
-def leads_job_poll(
-    job_id: int, request: Request, db: Session = Depends(get_db)
-) -> HTMLResponse:
+def leads_job_poll(job_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     job = db.get(AgentJob, job_id)
     if not job:
         return HTMLResponse(content="<div>Job not found</div>", status_code=404)
     prospects_list: list[Prospect] = []
     if job.status == "done" and job.job_type == "research":
-        prospects_list = (
-            db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
-        )
+        prospects_list = db.query(Prospect).filter(Prospect.source_job_id == job.id).all()
     return templates.TemplateResponse(
         request,
         "leads/_job_status_card.html",
@@ -298,9 +292,7 @@ def leads_send_email(
             )
             db.add(log)
             db.commit()
-            return RedirectResponse(
-                url=f"/sales/{prospect.id}?preview_sent=1", status_code=303
-            )
+            return RedirectResponse(url=f"/sales/{prospect.id}?preview_sent=1", status_code=303)
         return RedirectResponse(url="/leads/?preview_sent=1", status_code=303)
 
     try:
@@ -337,9 +329,12 @@ def leads_send_email(
 @router.get("/usage", response_class=HTMLResponse)
 def leads_usage(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     today_start = datetime.combine(date.today(), datetime.min.time())
-    today_tokens = db.query(sql_func.sum(AgentJob.tokens_used)).filter(
-        AgentJob.created_at >= today_start
-    ).scalar() or 0
+    today_tokens = (
+        db.query(sql_func.sum(AgentJob.tokens_used))
+        .filter(AgentJob.created_at >= today_start)
+        .scalar()
+        or 0
+    )
     total_tokens = db.query(sql_func.sum(AgentJob.tokens_used)).scalar() or 0
     latest = (
         db.query(AgentJob)

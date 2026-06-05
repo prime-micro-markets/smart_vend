@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -22,18 +23,32 @@ logger = logging.getLogger(__name__)
 _AI_MODEL = "claude-haiku-4-5-20251001"
 _MAX_FALLBACK_SEARCHES = 4
 
+# Hard wall-clock budget for a single comparison job. Even when every vendor
+# fetch and AI fallback stalls (e.g. a local network/SSL block that never
+# completes the TLS handshake), the job stops dispatching once this is exceeded
+# and finishes with whatever it has. Keeps the UI from spinning indefinitely
+# and bounds the per-SKU cost of a bulk-source run.
+_JOB_BUDGET_SECONDS = 25
+
 # Vendor site domains for targeted URL searches. Vendors Supply was archived
 # in Inventory v2 (selectors stale, no live scraping); historical AgentJob rows
 # may still reference it via VENDOR_META, but it's no longer dispatched.
 _VENDOR_SITE = {
-    "walmart": "walmart.com",
-    "sams_club": "samsclub.com",
     "webstaurantstore": "webstaurantstore.com",
     "candy_machines": "candymachines.com",
 }
 
-# Vendor display order (also controls which vendors appear in settings)
-VENDOR_KEYS = ["sams_club", "walmart", "webstaurantstore", "candy_machines"]
+# Vendors that have editable account config in the settings panel. Sam's Club
+# keeps its Club ID / ZIP here for reference, but Sam's is NOT in
+# COMPARATOR_FETCH_KEYS: the Render-side BFF fetch is permanently Akamai-blocked
+# from a datacenter IP, so member prices only ever arrive by pasting the
+# operator's own purchase history (Inventory → "Paste Sam's purchases").
+VENDOR_KEYS = ["sams_club", "webstaurantstore", "candy_machines"]
+
+# Vendors the live comparator actually dispatches (direct fetch + AI fallback)
+# and renders as checkboxes. Walmart was removed entirely (unreliable scrape,
+# prices not worth it); Sam's costs come from the paste-import path instead.
+COMPARATOR_FETCH_KEYS = ["webstaurantstore", "candy_machines"]
 
 
 def _setting_keys(vendor_key: str) -> dict[str, str]:
@@ -43,11 +58,6 @@ def _setting_keys(vendor_key: str) -> dict[str, str]:
             "zip": "compare_sams_zip",
             "club_id": "compare_sams_club_id",
             "club_name": "compare_sams_club_name",
-        },
-        "walmart": {
-            "zip": "compare_walmart_zip",
-            "store_id": "compare_walmart_store_id",
-            "store_name": "compare_walmart_store_name",
         },
         "webstaurantstore": {"email": "compare_webstaurantstore_email"},
         "candy_machines": {"email": "compare_candy_machines_email"},
@@ -80,24 +90,6 @@ def save_vendor_setting(db: Session, setting_key: str, value: str) -> None:
     db.commit()
 
 
-def _fetch_sams_club(query: str, vend_cfg: dict) -> list[PriceResult]:
-    from app.services.price_fetcher import sams_club
-
-    club_id = vend_cfg.get("club_id", "").strip()
-    if not club_id:
-        raise FetchError(
-            "Sam's Club Club ID not configured — enter your Club ID in the gear ⚙ settings."
-        )
-    return sams_club.search_products(query, club_id=club_id)
-
-
-def _fetch_walmart(query: str, vend_cfg: dict) -> list[PriceResult]:
-    from app.services.price_fetcher import walmart
-
-    store_id = vend_cfg.get("store_id", "").strip() or None
-    return walmart.search_products(query, store_id=store_id)
-
-
 def _fetch_webstaurantstore(query: str, vend_cfg: dict) -> list[PriceResult]:
     from app.services.price_fetcher import webstaurantstore
 
@@ -111,8 +103,6 @@ def _fetch_candy_machines(query: str, vend_cfg: dict) -> list[PriceResult]:
 
 
 _FETCHERS = {
-    "sams_club": _fetch_sams_club,
-    "walmart": _fetch_walmart,
     "webstaurantstore": _fetch_webstaurantstore,
     "candy_machines": _fetch_candy_machines,
 }
@@ -134,30 +124,9 @@ def _ai_fallback(
     meta = VENDOR_META.get(vendor_key, {})
     vendor_name = meta.get("label", vendor_key)
 
-    # Build location context string for store-specific vendors
+    # The dispatched vendors (WebstaurantStore, CandyMachines) are nationwide
+    # online sellers, so there's no store/club to scope the AI fallback to.
     location_hint = ""
-    if vendor_cfg:
-        cfg = vendor_cfg
-        if vendor_key == "walmart":
-            store_id = cfg.get("store_id", "").strip()
-            store_name = cfg.get("store_name", "").strip()
-            zip_code = cfg.get("zip", "").strip()
-            if store_id:
-                location_hint = f" store #{store_id}"
-                if store_name:
-                    location_hint = f" {store_name} (store #{store_id})"
-            elif zip_code:
-                location_hint = f" near ZIP {zip_code}"
-        elif vendor_key == "sams_club":
-            club_id = cfg.get("club_id", "").strip()
-            club_name = cfg.get("club_name", "").strip()
-            zip_code = cfg.get("zip", "").strip()
-            if club_id:
-                location_hint = f" club #{club_id}"
-                if club_name:
-                    location_hint = f" {club_name} (club #{club_id})"
-            elif zip_code:
-                location_hint = f" near ZIP {zip_code}"
 
     site_domain = _VENDOR_SITE.get(vendor_key, "")
 
@@ -307,11 +276,19 @@ def run_price_comparison_job(job_id: int) -> None:
         log: list[dict[str, Any]] = []
         all_results: list[dict] = []
         tokens_used = 0
+        start = time.monotonic()
+        # Reachability: True once any direct fetcher completes its HTTP request
+        # without raising (even with zero products). Stays False when every
+        # dispatched vendor throws — the signature of a blocked network — which
+        # the UI uses to show an honest "couldn't reach vendors" note instead of
+        # a bland "no prices found".
+        reachable = False
+        dispatched = 0
 
         try:
             params: dict[str, Any] = json.loads(job.input_params or "{}")
             query: str = params.get("product_query", "")
-            selected_vendors: list[str] = params.get("vendors", VENDOR_KEYS)
+            selected_vendors: list[str] = params.get("vendors", COMPARATOR_FETCH_KEYS)
             provider: str = params.get("search_provider", "duckduckgo")
             vendor_cfg: dict[str, dict] = params.get("vendor_config", {})
             # Bound Product's case pack lets the dispatcher backfill missing
@@ -331,12 +308,20 @@ def run_price_comparison_job(job_id: int) -> None:
                 if vendor_key not in _FETCHERS:
                     continue
 
+                # Stop dispatching once the wall-clock budget is spent so the
+                # job (and each SKU of a bulk-source run) can't hang.
+                if time.monotonic() - start > _JOB_BUDGET_SECONDS:
+                    log.append({"event": "budget_exhausted", "vendor": vendor_key})
+                    break
+
+                dispatched += 1
                 log.append({"event": "fetch_start", "vendor": vendor_key})
                 fetcher = _FETCHERS[vendor_key]
                 cfg = vendor_cfg.get(vendor_key, {})
 
                 try:
                     results = fetcher(query, cfg)
+                    reachable = True
                     log.append(
                         {
                             "event": "fetch_done",
@@ -354,12 +339,17 @@ def run_price_comparison_job(job_id: int) -> None:
                     )
                     results = []
 
-                if not results:
+                # Only spend the (slow) AI fallback when there's budget left.
+                if not results and time.monotonic() - start <= _JOB_BUDGET_SECONDS:
                     log.append({"event": "fallback_start", "vendor": vendor_key})
                     results = _ai_fallback(query, vendor_key, provider, log, vendor_cfg=cfg)
+                    if results:
+                        reachable = True
                     log.append(
                         {"event": "fallback_done", "vendor": vendor_key, "count": len(results)}
                     )
+                elif not results:
+                    log.append({"event": "fallback_skipped_budget", "vendor": vendor_key})
 
                 # Normalize each row's unit/case math, then drop fully empty
                 # rows (no price, no URL — they only ever rendered "$—" and
@@ -380,6 +370,24 @@ def run_price_comparison_job(job_id: int) -> None:
 
                 all_results.extend(r.to_dict() for r in kept)
 
+                # Commit progress after each vendor so the 3s poll shows live
+                # status instead of a frozen spinner. Status stays "running".
+                job.agent_log = json.dumps(log)[:20_000]
+                db.commit()
+
+            # network_blocked = we dispatched at least one direct fetcher and
+            # every one threw (no successful HTTP). The single-SKU result view
+            # uses this to explain the empty result honestly.
+            network_blocked = dispatched > 0 and not reachable
+            log.append(
+                {
+                    "event": "summary",
+                    "reachable": reachable,
+                    "network_blocked": network_blocked,
+                    "result_count": len(all_results),
+                }
+            )
+
             job.draft_body = json.dumps(all_results)
             job.prospects_found = len(all_results)
             job.tokens_used = tokens_used
@@ -394,3 +402,23 @@ def run_price_comparison_job(job_id: int) -> None:
 
         job.finished_at = datetime.now()
         db.commit()
+
+
+def job_summary(job: AgentJob | None) -> dict[str, Any]:
+    """Return the trailing ``summary`` event from a job's agent_log (or {}).
+
+    Lets the result views answer "did we actually reach any vendor, or was the
+    network blocked?" without re-deriving it from raw log events.
+    """
+    if not job or not job.agent_log:
+        return {}
+    try:
+        events = json.loads(job.agent_log)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(events, list):
+        return {}
+    for ev in reversed(events):
+        if isinstance(ev, dict) and ev.get("event") == "summary":
+            return ev
+    return {}

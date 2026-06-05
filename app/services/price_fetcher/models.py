@@ -85,17 +85,14 @@ VENDOR_META: dict[str, dict] = {
         "icon": "bi-building",
         "color": "primary",
     },
-    "walmart": {
-        "label": "Walmart",
-        "type": "local_retail",
-        "icon": "bi-cart3",
-        "color": "info",
-    },
     "webstaurantstore": {
         "label": "WebstaurantStore",
         "type": "online_wholesale",
         "icon": "bi-globe",
         "color": "success",
+        # Reliable scrape only with Firecrawl; otherwise hit-or-miss. Flagged in
+        # the comparator UI so the operator weighs its prices accordingly.
+        "weak": True,
     },
     "vendors_supply": {
         "label": "Vendors Supply",
@@ -108,5 +105,7 @@ VENDOR_META: dict[str, dict] = {
         "type": "online_vending",
         "icon": "bi-star",
         "color": "danger",
+        # Vending-retail prices (not true wholesale) + noisy off-domain hits.
+        "weak": True,
     },
 }

@@ -62,8 +62,8 @@ def _build_research_system_prompt(
         "phone, and website — these are reliably findable.\n\n"
         "When you have gathered enough results, output ONLY a valid JSON array. "
         "Each object must have these exact keys (use empty string if unknown):\n"
-        '  company_name, address, city, venue_type, foot_traffic_estimate, '
-        'contact_name, phone, website, notes\n\n'
+        "  company_name, address, city, venue_type, foot_traffic_estimate, "
+        "contact_name, phone, website, notes\n\n"
         "Do not include any text before or after the JSON array. "
         "Only include businesses with a real company_name."
     )
@@ -184,11 +184,13 @@ def run_research_job(job_id: int) -> None:
                         block.text for block in response.content if hasattr(block, "text")
                     )
                     leads = _extract_json_leads(final_text)
-                    log_entries.append({
-                        "event": "end_turn",
-                        "leads_parsed": len(leads),
-                        "response_preview": final_text[:400],
-                    })
+                    log_entries.append(
+                        {
+                            "event": "end_turn",
+                            "leads_parsed": len(leads),
+                            "response_preview": final_text[:400],
+                        }
+                    )
                     break
 
                 tool_results = []
@@ -204,11 +206,13 @@ def run_research_job(job_id: int) -> None:
                             result_text = json.dumps(results)
                         except Exception as search_exc:
                             result_text = f"Search error: {search_exc}"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text,
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result_text,
+                            }
+                        )
 
                 if not tool_results:
                     # Response had no tool calls and wasn't end_turn — force compilation
@@ -218,15 +222,17 @@ def run_research_job(job_id: int) -> None:
             else:
                 # Tool call limit reached — ask Claude to compile what it already found
                 log_entries.append({"event": "max_tool_calls_reached"})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "You have reached the search limit. "
-                        "Output ONLY the JSON array of every business you found so far. "
-                        "Include any business you identified even if details are incomplete — "
-                        "use empty string for unknown fields. No other text, just the JSON array."
-                    ),
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "You have reached the search limit. "
+                            "Output ONLY the JSON array of every business you found so far. "
+                            "Include any business you identified even if details are incomplete — "
+                            "use empty string for unknown fields. No other text, just the JSON array."
+                        ),
+                    }
+                )
                 compile_raw = client.messages.with_raw_response.create(
                     model=research_model,
                     max_tokens=2048,
@@ -245,11 +251,13 @@ def run_research_job(job_id: int) -> None:
                     block.text for block in compile_resp.content if hasattr(block, "text")
                 )
                 leads = _extract_json_leads(final_text)
-                log_entries.append({
-                    "event": "forced_compile",
-                    "leads_parsed": len(leads),
-                    "response_preview": final_text[:400],
-                })
+                log_entries.append(
+                    {
+                        "event": "forced_compile",
+                        "leads_parsed": len(leads),
+                        "response_preview": final_text[:400],
+                    }
+                )
 
             created = skipped = 0
             for lead in leads:
@@ -381,7 +389,7 @@ def run_email_draft_job(job_id: int) -> None:
             subject_match = re.match(r"Subject:\s*(.+?)(\n|$)", full_text)
             if subject_match:
                 subject = subject_match.group(1).strip()
-                body = full_text[subject_match.end():].strip()
+                body = full_text[subject_match.end() :].strip()
 
             job.draft_subject = subject
             job.draft_body = body

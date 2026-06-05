@@ -23,9 +23,7 @@ class Supplier(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Onboarding state — surfaces the "open these accounts" workflow on the
     # Suppliers tab. Lower `priority` sorts to the top of that banner.
-    account_status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="not_started"
-    )
+    account_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_started")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
@@ -43,6 +41,9 @@ class Product(Base):
     sku: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     brand: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # UPC/EAN barcode — keys the market-reference lookups (UPCitemdb, Open
+    # Prices). Reference-only; never used in cost/margin math.
+    upc: Mapped[str | None] = mapped_column(String(20), nullable=True)
     category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     unit_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     sell_price: Mapped[float | None] = mapped_column(Float, nullable=True)

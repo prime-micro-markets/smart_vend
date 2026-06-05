@@ -44,7 +44,7 @@ FastAPI + Uvicorn · SQLite (dev) / Postgres (prod, psycopg 3) + SQLAlchemy 2.0 
 
 ### Auth (`app/routers/auth.py`, `app/services/auth.py`)
 
-Google OAuth via `authlib` + Starlette `SessionMiddleware`. `require_user` is a FastAPI dependency injected via `dependencies=[Depends(require_user)]` on protected routers in `main.py`. Public routes (`/`, `/login`, `/auth/*`, `/chatbot/*`) are mounted without this dependency.
+Google OAuth via `authlib` + Starlette `SessionMiddleware`. `require_user` is a FastAPI dependency injected via `dependencies=[Depends(require_user)]` on protected routers in `main.py`. Public routes (`/`, `/login`, `/auth/*`, `/chatbot/*`) are mounted without this dependency; everything else (including the Inventory cost-import and Sam's paste pages) requires sign-in.
 
 ### HTMX partial rendering pattern
 
@@ -56,7 +56,25 @@ Long-running AI tasks (equipment refresh, lead research, email drafting) use Fas
 
 ### AppSetting
 
-Key-value config persisted in SQLite (`app_settings` table). Currently used to remember `search_provider` (duckduckgo vs tavily) between equipment refresh runs, and `equipment_curated_v1` (a sentinel so `scripts/curate_equipment.py` applies only once). Accessed via `_get_setting` / `_set_setting` helpers in routers.
+Key-value config persisted in SQLite (`app_settings` table). Currently used to remember `search_provider` (duckduckgo vs tavily) between equipment refresh runs and `equipment_curated_v1` (a sentinel so `scripts/curate_equipment.py` applies only once). Accessed via `_get_setting` / `_set_setting` helpers in routers.
+
+### Cost entry & Sam's Club purchase-history import
+
+Sam's Club product/pricing endpoints sit behind Akamai bot protection, so a server-side fetch from Render's datacenter IP is permanently blocked. Sam's is therefore **not** dispatched by the price comparator (`COMPARATOR_FETCH_KEYS` excludes it; `VENDOR_KEYS` still lists it so its Club ID / ZIP stay editable for reference). Rather than scrape, the team enters real costs through three reliable, dependency-free paths in the Inventory tab — all of which upsert a `Sam's Club` `ProductSource` via `_upsert_product_source_from_comparison` and feed the comparator/margins:
+
+- **Bulk cost grid** (`_bulk_costs.html` → `POST /inventory/costs/bulk`): a case-price + pack input per SKU, one Save-all writes a `ProductSource(origin="bulk_entry")` per filled row. The route lives under `/costs/` so it doesn't collide with the `/{product_id}` catch-all.
+- **CSV import** (`GET/POST /inventory/costs/import` + `/costs/import/template`): match each row by SKU then exact name, upsert `origin="bulk_entry"`, report skipped/unmatched rows back.
+- **Sam's purchase-history paste** (`GET /inventory/costs/sams-paste`, `POST .../preview`, `POST .../save`): a **no-token** bookmarklet (`static/js/sams_orders_capture.js`) reads the operator's own logged-in `samsclub.com/orders` page (embedded Next.js/redux state, DOM fallback) and copies line items to the clipboard. The operator pastes into an authenticated app page (behind Google login); `app/services/sams_paste.py::parse_sams_paste` tolerantly parses JSON / CSV export / copied tables, the preview renders a review/match table (best-guess SKU pre-selected), and Save writes `ProductSource(origin="sams_purchase")` with the *actual paid price* (instant savings included).
+
+`parse_products_payload()` / `search_products()` in `sams_club.py` remain for **local testing only** (host IP isn't blocked off-Render); they are not wired into any live path. **Walmart was removed entirely** (unreliable scrape, prices not worth it). The earlier cross-origin **token-gated `/ingest` router, `ingest_token.py`, the `sams_capture.js` bookmarklet, and the `sams_bulk_lookup.py` Playwright helper were all retired** — the token couldn't survive the local↔prod DB split and Playwright's Chrome was Akamai-detected; the paste flow needs neither.
+
+### Market reference (read-only competitor pricing)
+
+The comparator has two sides. The **cost side** is `ProductSource` rows (above) — the only thing that touches `effective_cost`/`margin_pct`. The **market side** (`app/services/market_reference.py`) is *reference only*: what other sellers charge for a similar item, so the operator can sanity-check **sell** prices. It is never written as a `ProductSource` and never enters cost/margin math. `POST /inventory/compare/market` gathers it and renders `_market_reference.html` (an HTMX panel under the comparator results); the `Product.upc` barcode (added in migration `h3i4j5k6l7m8`) keys the barcode lookups and is persisted back when the operator enters/corrects it.
+
+`gather_market_reference(query=, upc=, category=)` runs four best-effort fetchers, each degrading to "no data" (never an error) when its key/credential is missing: **UPCitemdb** (barcode → recorded retail band; keyless trial at 100/day, paid key raises it), **Open Prices** (Open Food Facts crowd-sourced shelf prices by barcode), **BLS** (national average for a few categories mapped in `_BLS_SERIES`), and **eBay Browse** (live listings via OAuth client-credentials; flagged `weak=True`). WebstaurantStore and CandyMachines also carry `"weak": True` in `VENDOR_META` so the comparator tags their prices as approximate. Env: `UPCITEMDB_API_KEY` (optional), `EBAY_CLIENT_ID`/`EBAY_CLIENT_SECRET`, `BLS_API_KEY` (optional) — see `app/config.py`.
+
+UPCs reach products three ways so they don't have to be typed per-SKU: **automatic** — `POST /inventory/upc/fill-missing` resolves blank-UPC active products through `market_reference.search_upc()` (UPCitemdb name search, capped at `_UPC_FILL_LIMIT` per run for the quota, only fills blanks, reviewable); **bulk** — an optional `upc` column on the cost CSV import (UPC-only rows with no price are allowed); **manual** — the `upc` field on the product add/edit form, or the box in the market-reference panel. The barcode lookup itself is fully programmatic: once stored, every market check reuses `Product.upc` automatically.
 
 ### Equipment sourcing & curation
 
@@ -96,6 +114,11 @@ GOOGLE_CLIENT_SECRET=...
 SESSION_SECRET_KEY=...
 ALLOWED_EMAILS=comma,separated,list
 GROQ_API_KEY=gsk_...
+# Market-reference pricing (all optional; each source degrades to "no data" when unset)
+UPCITEMDB_API_KEY=...
+EBAY_CLIENT_ID=...
+EBAY_CLIENT_SECRET=...
+BLS_API_KEY=...
 ```
 
 The app starts without any API keys set; AI features return errors until configured. Unknown env vars are ignored (`extra="ignore"` in `app/config.py`), so retired keys won't crash startup. `GROQ_API_KEY` powers the public chatbot (free tier) with a Claude Haiku fallback.

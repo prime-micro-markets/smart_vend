@@ -32,8 +32,8 @@ _CALENDAR_ID = "primary"
 # Business-hours / slotting config. Constants for now; promote to AppSetting later
 # if the team wants to tune these from the UI.
 _BUSINESS_DAYS = {0, 1, 2, 3, 4}  # Mon-Fri (Monday = 0)
-_OPEN_HOUR = 9                    # first slot starts 9:00 AM CT
-_CLOSE_HOUR = 17                  # last slot ends by 5:00 PM CT
+_OPEN_HOUR = 9  # first slot starts 9:00 AM CT
+_CLOSE_HOUR = 17  # last slot ends by 5:00 PM CT
 _SLOT_MINUTES = 30
 _LOOKAHEAD_DAYS = 7
 _MAX_SLOTS = 8
@@ -124,8 +124,7 @@ def format_slots_for_chat(slots: list[datetime]) -> str:
         body += f"\n\nBook your preferred time here: {booking_url}"
     else:
         body += (
-            "\n\nReply with one that works and we'll confirm, "
-            "or email primemicromarkets@gmail.com."
+            "\n\nReply with one that works and we'll confirm, or email primemicromarkets@gmail.com."
         )
     return body
 

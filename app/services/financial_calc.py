@@ -6,8 +6,18 @@ import json
 from typing import Any
 
 MONTHS = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
 ]
 
 DAYS_PER_MONTH = 30.4
@@ -34,8 +44,12 @@ def build_12month_table(
     base_monthly_revenue = base_monthly_txns * avg_ticket_usd
     # Fixed costs don't scale with volume; commission and processing do (handled per-month).
     fixed_opex = (
-        restock_labor_monthly + supplies_monthly + insurance_monthly
-        + other_opex_monthly + connectivity_monthly + software_monthly
+        restock_labor_monthly
+        + supplies_monthly
+        + insurance_monthly
+        + other_opex_monthly
+        + connectivity_monthly
+        + software_monthly
     )
 
     rows = []
@@ -51,20 +65,22 @@ def build_12month_table(
         total_opex = fixed_opex + commission + processing
         net = gross_profit - total_opex
         cumulative += net
-        rows.append({
-            "month": MONTHS[i],
-            "multiplier": mult,
-            "transactions": transactions,
-            "revenue": revenue,
-            "cogs": cogs,
-            "gross_profit": gross_profit,
-            "cogs_pct": cogs_pct * 100,
-            "commission": commission,
-            "processing": processing,
-            "total_opex": total_opex,
-            "net": net,
-            "cumulative": cumulative,
-        })
+        rows.append(
+            {
+                "month": MONTHS[i],
+                "multiplier": mult,
+                "transactions": transactions,
+                "revenue": revenue,
+                "cogs": cogs,
+                "gross_profit": gross_profit,
+                "cogs_pct": cogs_pct * 100,
+                "commission": commission,
+                "processing": processing,
+                "total_opex": total_opex,
+                "net": net,
+                "cumulative": cumulative,
+            }
+        )
     return rows
 
 
@@ -121,9 +137,7 @@ def calc_unit_economics(
     """
     variable_pct = cogs_pct + commission_pct + processing_fee_pct
     contribution_per_txn = avg_ticket_usd * (1 - variable_pct) - processing_fee_per_txn
-    contribution_margin_pct = (
-        contribution_per_txn / avg_ticket_usd * 100 if avg_ticket_usd else 0.0
-    )
+    contribution_margin_pct = contribution_per_txn / avg_ticket_usd * 100 if avg_ticket_usd else 0.0
 
     breakeven_txns_month: float | None = None
     breakeven_txns_day: float | None = None
@@ -184,14 +198,16 @@ def cost_breakdown(table: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if amount <= 0:
             continue
-        segments.append({
-            "key": key,
-            "label": label,
-            "css": css,
-            "amount": amount,
-            "pct_of_revenue": (amount / revenue * 100) if revenue else 0.0,
-            "width": amount / denom * 100,
-        })
+        segments.append(
+            {
+                "key": key,
+                "label": label,
+                "css": css,
+                "amount": amount,
+                "pct_of_revenue": (amount / revenue * 100) if revenue else 0.0,
+                "width": amount / denom * 100,
+            }
+        )
 
     return {
         "revenue": revenue,

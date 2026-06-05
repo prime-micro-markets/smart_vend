@@ -13,9 +13,7 @@ class AgentJob(Base):
     job_type: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     input_params: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prospect_id: Mapped[int | None] = mapped_column(
-        ForeignKey("prospects.id"), nullable=True
-    )
+    prospect_id: Mapped[int | None] = mapped_column(ForeignKey("prospects.id"), nullable=True)
 
     prospects_found: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     prospects_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
