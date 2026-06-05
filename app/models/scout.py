@@ -34,4 +34,18 @@ class ScoutedLocation(Base):
     promoted_prospect_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Phase 2 AI deep-dive (filled by agent.run_scout_enrich_job). ai_status:
+    # none | pending | running | done | error.
+    ai_status: Mapped[str] = mapped_column(String(20), default="none")
+    ai_job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_employees: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    ai_foot_traffic: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ai_contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    ai_contact_title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ai_contact_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_contact_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ai_has_vending: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    ai_researched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     saved_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)

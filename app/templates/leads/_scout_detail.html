@@ -70,6 +70,30 @@
   </span>
 </div>
 
-<div class="small text-muted mt-3 border-top pt-2">
-  <i class="bi bi-robot me-1"></i>AI deep-dive (employees, decision-maker, contact, reliable vending check) is coming in a later step.
+<div id="scout-ai-panel" class="mt-3 border-top pt-2">
+  {% if scout and scout.ai_status and scout.ai_status != 'none' %}
+    {% include "leads/_scout_enrich.html" %}
+  {% else %}
+    <form hx-post="/leads/scout/enrich" hx-target="#scout-ai-panel" hx-swap="innerHTML">
+      <input type="hidden" name="osm_id" value="{{ biz.osm_id }}">
+      <input type="hidden" name="name" value="{{ biz.name }}">
+      <input type="hidden" name="venue_type" value="{{ biz.venue_type }}">
+      <input type="hidden" name="lat" value="{{ biz.lat }}">
+      <input type="hidden" name="lng" value="{{ biz.lng }}">
+      <input type="hidden" name="address" value="{{ biz.address }}">
+      <input type="hidden" name="phone" value="{{ biz.phone }}">
+      <input type="hidden" name="website" value="{{ biz.website }}">
+      <input type="hidden" name="has_vending_guess" value="{{ biz.has_vending_guess }}">
+      <input type="hidden" name="nearest_food_mi" value="{{ biz.nearest_food_mi }}">
+      <input type="hidden" name="opportunity_score" value="{{ biz.opportunity_score }}">
+      <input type="hidden" name="fit_tags" value="{{ biz.fit_tags|tojson }}">
+      <button type="submit" class="btn btn-sm btn-primary"
+              hx-on::after-request="document.body.dispatchEvent(new Event('refresh-scouts'))">
+        <i class="bi bi-robot me-1"></i>Research this business (AI)
+      </button>
+      <div class="text-muted mt-1" style="font-size:.75rem">
+        Estimates employees, decision-maker, contact, and a vending check. Uses a few AI tokens; saves the business too.
+      </div>
+    </form>
+  {% endif %}
 </div>

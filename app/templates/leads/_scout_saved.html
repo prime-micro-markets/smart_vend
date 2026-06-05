@@ -19,6 +19,15 @@
           {% if s.nearest_food_mi is not none %} · food {{ s.nearest_food_mi }} mi{% endif %}
           {% if s.address %} · {{ s.address }}{% endif %}
         </div>
+        <div class="mt-1">
+          {% if s.ai_status == 'done' %}
+          <span class="badge bg-primary-subtle text-primary-emphasis border"><i class="bi bi-robot me-1"></i>AI researched</span>
+          {% if s.ai_employees %}<span class="badge bg-light text-dark border">~{{ s.ai_employees }} emp</span>{% endif %}
+          {% if s.ai_contact_name %}<span class="badge bg-light text-dark border">{{ s.ai_contact_name }}</span>{% endif %}
+          {% elif s.ai_status in ('pending', 'running') %}
+          <span class="badge bg-warning-subtle text-warning-emphasis border"><span class="spinner-border spinner-border-sm me-1" style="width:.6rem;height:.6rem"></span>Researching…</span>
+          {% endif %}
+        </div>
       </div>
       <div class="text-end text-nowrap">
         <span class="badge

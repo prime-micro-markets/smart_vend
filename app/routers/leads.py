@@ -588,16 +588,62 @@ def leads_scout_biz(
         "rating": extra.get("rating"),
         "enriched": bool(extra),
     }
-    is_saved = db.query(ScoutedLocation.id).filter_by(osm_id=osm_id).first() is not None
+    scout_row = db.query(ScoutedLocation).filter_by(osm_id=osm_id).first()
     return templates.TemplateResponse(
         request,
         "leads/_scout_detail.html",
         {
             "biz": biz,
-            "is_saved": is_saved,
+            "is_saved": scout_row is not None,
+            "scout": scout_row,
             "places_configured": bool(settings.google_places_api_key),
         },
     )
+
+
+def _get_or_create_scouted(
+    db: Session,
+    *,
+    osm_id: str,
+    name: str,
+    venue_type: str,
+    lat: float,
+    lng: float,
+    address: str,
+    phone: str,
+    website: str,
+    has_vending_guess: str,
+    nearest_food_mi: str,
+    opportunity_score: int,
+    fit_tags: str,
+) -> ScoutedLocation:
+    """Idempotent upsert of a scouted business keyed by osm_id (shared by the
+    Save and AI-enrich routes)."""
+    existing = db.query(ScoutedLocation).filter_by(osm_id=osm_id).first()
+    if existing:
+        return existing
+    try:
+        food_mi = float(nearest_food_mi) if nearest_food_mi not in ("", "None") else None
+    except ValueError:
+        food_mi = None
+    row = ScoutedLocation(
+        osm_id=osm_id,
+        name=name,
+        venue_type=venue_type or None,
+        address=address or None,
+        lat=lat,
+        lng=lng,
+        phone=phone or None,
+        website=website or None,
+        opportunity_score=opportunity_score,
+        nearest_food_mi=food_mi,
+        has_vending_guess=has_vending_guess or "unknown",
+        signals=fit_tags or None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 @router.post("/scout/save", response_class=HTMLResponse)
@@ -619,35 +665,96 @@ def leads_scout_save(
 ) -> HTMLResponse:
     """Idempotently upsert a scouted business, keyed by osm_id. Returns a 'Saved'
     badge to swap in place of the Save button."""
-    existing = db.query(ScoutedLocation).filter_by(osm_id=osm_id).first()
-    if not existing:
-        try:
-            food_mi = float(nearest_food_mi) if nearest_food_mi not in ("", "None") else None
-        except ValueError:
-            food_mi = None
-        db.add(
-            ScoutedLocation(
-                osm_id=osm_id,
-                name=name,
-                venue_type=venue_type or None,
-                address=address or None,
-                lat=lat,
-                lng=lng,
-                phone=phone or None,
-                website=website or None,
-                opportunity_score=opportunity_score,
-                nearest_food_mi=food_mi,
-                has_vending_guess=has_vending_guess or "unknown",
-                signals=fit_tags or None,
-            )
-        )
-        db.commit()
+    _get_or_create_scouted(
+        db,
+        osm_id=osm_id,
+        name=name,
+        venue_type=venue_type,
+        lat=lat,
+        lng=lng,
+        address=address,
+        phone=phone,
+        website=website,
+        has_vending_guess=has_vending_guess,
+        nearest_food_mi=nearest_food_mi,
+        opportunity_score=opportunity_score,
+        fit_tags=fit_tags,
+    )
     return HTMLResponse(
         content=(
             '<span class="badge bg-success-subtle text-success border border-success-subtle">'
             '<i class="bi bi-check-lg me-1"></i>Saved</span>'
         ),
         status_code=200,
+    )
+
+
+@router.post("/scout/enrich", response_class=HTMLResponse)
+def leads_scout_enrich(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    osm_id: str = Form(...),
+    name: str = Form(...),
+    venue_type: str = Form(""),
+    lat: float = Form(...),
+    lng: float = Form(...),
+    address: str = Form(""),
+    phone: str = Form(""),
+    website: str = Form(""),
+    has_vending_guess: str = Form("unknown"),
+    nearest_food_mi: str = Form(""),
+    opportunity_score: int = Form(0),
+    fit_tags: str = Form("[]"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Save (if needed) and kick off the AI deep-dive for one business. Returns
+    the polling panel that streams status until the job finishes."""
+    row = _get_or_create_scouted(
+        db,
+        osm_id=osm_id,
+        name=name,
+        venue_type=venue_type,
+        lat=lat,
+        lng=lng,
+        address=address,
+        phone=phone,
+        website=website,
+        has_vending_guess=has_vending_guess,
+        nearest_food_mi=nearest_food_mi,
+        opportunity_score=opportunity_score,
+        fit_tags=fit_tags,
+    )
+    # Don't start a second job if one is already running for this row.
+    if row.ai_status not in ("pending", "running"):
+        job = AgentJob(
+            job_type="scout_enrich",
+            status="pending",
+            input_params=json.dumps({"scout_id": row.id}),
+        )
+        db.add(job)
+        db.commit()
+        row.ai_status = "pending"
+        row.ai_job_id = job.id
+        db.commit()
+        background_tasks.add_task(agent.run_scout_enrich_job, job.id)
+    return templates.TemplateResponse(
+        request,
+        "leads/_scout_enrich.html",
+        {"scout": row},
+    )
+
+
+@router.get("/scout/enrich/{scout_id}/poll", response_class=HTMLResponse)
+def leads_scout_enrich_poll(
+    scout_id: int, request: Request, db: Session = Depends(get_db)
+) -> HTMLResponse:
+    row = db.get(ScoutedLocation, scout_id)
+    if not row:
+        return HTMLResponse(content="<div>Not found</div>", status_code=404)
+    return templates.TemplateResponse(
+        request,
+        "leads/_scout_enrich.html",
+        {"scout": row},
     )
 
 
@@ -673,13 +780,24 @@ def leads_scout_promote(scout_id: int, db: Session = Depends(get_db)) -> HTMLRes
     if row.nearest_food_mi is not None:
         note_bits.append(f"Nearest food/store: {row.nearest_food_mi} mi.")
     if row.has_vending_guess and row.has_vending_guess != "unknown":
-        note_bits.append(f"Vending: {row.has_vending_guess}.")
+        note_bits.append(f"Vending (map): {row.has_vending_guess}.")
+    # Fold in the AI deep-dive findings when present.
+    if row.ai_summary:
+        note_bits.append(f"AI: {row.ai_summary}")
+    if row.ai_employees:
+        note_bits.append(f"Est. employees: {row.ai_employees}.")
+    if row.ai_has_vending:
+        note_bits.append(f"Vending (AI): {row.ai_has_vending}.")
     prospect = Prospect(
         company_name=row.name,
         venue_type=row.venue_type,
         address=row.address,
         website=row.website,
-        contact_phone=row.phone,
+        contact_name=row.ai_contact_name,
+        contact_title=row.ai_contact_title,
+        contact_email=row.ai_contact_email,
+        contact_phone=row.ai_contact_phone or row.phone,
+        foot_traffic_estimate=row.ai_foot_traffic,
         source="scout_map",
         notes=" ".join(note_bits),
     )

@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import engine
 from app.models.agent import AgentJob
 from app.models.sales import Prospect
+from app.models.scout import ScoutedLocation
 from app.services import app_settings, web_search
 
 logger = logging.getLogger(__name__)
@@ -311,6 +312,213 @@ def run_research_job(job_id: int) -> None:
 
         job.finished_at = datetime.now()
         db.commit()
+
+
+def _build_scout_enrich_prompt(scout: ScoutedLocation) -> str:
+    """System prompt for the single-business AI deep-dive on the Scout Map."""
+    where = ", ".join(p for p in (scout.address, "") if p) or "the mapped location"
+    return (
+        f"You are a sales-intelligence researcher for {settings.company_blurb}\n\n"
+        f"Research this ONE specific business so a salesperson can decide whether to pitch a "
+        f"free smart-cooler / micro-market placement and who to contact:\n"
+        f"  Business name: {scout.name}\n"
+        f"  Address: {where}\n"
+        f"  Coordinates: {scout.lat}, {scout.lng}\n"
+        f"  Venue type (from the map): {scout.venue_type or 'unknown'}\n"
+        f"  Website (if known): {scout.website or 'unknown'}\n\n"
+        "Use the web_search tool with targeted queries (the business name plus its city, plus "
+        "terms like 'employees', 'manager', 'careers', 'about', 'contact'). Search several times "
+        "with varied queries. Do not waste searches hunting for an email — they're rarely public; "
+        "only record one if you actually see it.\n\n"
+        "Estimate what you cannot find exactly, and clearly label estimates. For employees and "
+        "foot traffic, a reasonable range/level based on the business type and size is fine.\n\n"
+        "When done, output ONLY a single valid JSON object (no prose before or after) with these "
+        "exact keys (use an empty string if truly unknown):\n"
+        "  summary           - 1-2 sentence description of what the business is/does\n"
+        "  employees         - approximate headcount or range, e.g. '20-50'\n"
+        "  foot_traffic      - one of: low, medium, high\n"
+        "  contact_name      - likely on-site decision-maker (owner / GM / office or property "
+        "manager)\n"
+        "  contact_title     - that person's role\n"
+        "  contact_email     - only if you actually found it\n"
+        "  contact_phone     - main business phone\n"
+        "  website           - official website URL\n"
+        "  has_vending       - short verdict on whether they likely ALREADY have vending / a "
+        "micro market on site, with a brief reason, e.g. 'Unknown - no info found' or 'Likely yes "
+        "- large gym, typically has machines'\n"
+    )
+
+
+def _extract_json_object(text: str, *, context: str) -> dict[str, Any]:
+    """Pull a single JSON object from an LLM response (returns {} on failure)."""
+    from app.services.json_extract import extract_json_list
+
+    rows = extract_json_list(text, context=context)
+    return rows[0] if rows else {}
+
+
+def run_scout_enrich_job(job_id: int) -> None:
+    """Background task: AI deep-dive on one scouted business (Scout Map Phase 2).
+
+    Researches the business with Claude + web search and writes the structured
+    findings back onto its ``ScoutedLocation`` row. Never raises out of the task;
+    failures are recorded on both the job and the scout row."""
+    with Session(engine) as db:
+        job = db.get(AgentJob, job_id)
+        if not job:
+            return
+
+        params: dict[str, Any] = json.loads(job.input_params or "{}")
+        scout_id = int(params.get("scout_id", 0))
+        scout = db.get(ScoutedLocation, scout_id) if scout_id else None
+
+        job.status = "running"
+        job.started_at = datetime.now()
+        if scout:
+            scout.ai_status = "running"
+        db.commit()
+
+        try:
+            if not settings.anthropic_api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY is not configured in .env")
+            if not scout:
+                raise RuntimeError(f"ScoutedLocation {scout_id} not found")
+
+            import anthropic  # type: ignore[import-untyped]
+
+            provider = _get_search_provider(db)
+            model = app_settings.get_str(db, "research_model")
+            max_tool_calls = app_settings.get_int(
+                db, "research_max_tool_calls", minimum=1, maximum=50
+            )
+            system_prompt = _build_scout_enrich_prompt(scout)
+            search_tool = _make_search_tool(scout.address or scout.name)
+
+            client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+            messages: list[dict[str, Any]] = [
+                {"role": "user", "content": f"Research {scout.name} now."}
+            ]
+            log_entries: list[dict[str, Any]] = []
+            tool_call_count = 0
+            total_tokens = 0
+            final_text = ""
+
+            while tool_call_count <= max_tool_calls:
+                raw = client.messages.with_raw_response.create(
+                    model=model,
+                    max_tokens=1536,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    tools=[search_tool],
+                    messages=messages,
+                )
+                response = raw.parse()
+                total_tokens += response.usage.input_tokens + response.usage.output_tokens
+                if tool_call_count == 0:
+                    try:
+                        rl = raw.headers.get("anthropic-ratelimit-tokens-remaining")
+                        job.ratelimit_tokens_remaining = int(rl) if rl else None
+                        job.ratelimit_tokens_reset = raw.headers.get(
+                            "anthropic-ratelimit-tokens-reset"
+                        )
+                    except Exception:
+                        logger.debug("Failed to parse rate-limit headers for job %d", job_id)
+
+                messages.append({"role": "assistant", "content": response.content})
+
+                if response.stop_reason == "end_turn":
+                    final_text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                    break
+
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use" and block.name == "web_search":
+                        tool_call_count += 1
+                        query = block.input.get("query", "")
+                        log_entries.append(
+                            {"event": "tool_call", "query": query, "n": tool_call_count}
+                        )
+                        try:
+                            results = web_search.search(query, max_results=3, provider=provider)
+                            result_text = json.dumps(results)
+                        except Exception as search_exc:
+                            result_text = f"Search error: {search_exc}"
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result_text,
+                            }
+                        )
+                if not tool_results:
+                    final_text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                    break
+                messages.append({"role": "user", "content": tool_results})
+            else:
+                # Hit the search cap — ask for the JSON object from what was found.
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Search limit reached. Output ONLY the single JSON object now, using "
+                            "empty strings for anything still unknown."
+                        ),
+                    }
+                )
+                compile_raw = client.messages.with_raw_response.create(
+                    model=model,
+                    max_tokens=1536,
+                    system=[{"type": "text", "text": system_prompt}],
+                    messages=messages,
+                )
+                compile_resp = compile_raw.parse()
+                total_tokens += compile_resp.usage.input_tokens + compile_resp.usage.output_tokens
+                final_text = "".join(b.text for b in compile_resp.content if hasattr(b, "text"))
+
+            data = _extract_json_object(final_text, context="scout enrich")
+
+            scout.ai_summary = (data.get("summary") or "").strip() or None
+            scout.ai_employees = (data.get("employees") or "").strip() or None
+            scout.ai_foot_traffic = (data.get("foot_traffic") or "").strip().lower() or None
+            scout.ai_contact_name = (data.get("contact_name") or "").strip() or None
+            scout.ai_contact_title = (data.get("contact_title") or "").strip() or None
+            scout.ai_contact_email = (data.get("contact_email") or "").strip() or None
+            scout.ai_contact_phone = (data.get("contact_phone") or "").strip() or None
+            scout.ai_has_vending = (data.get("has_vending") or "").strip()[:160] or None
+            # Backfill base contact fields if the map had none.
+            if not scout.phone and scout.ai_contact_phone:
+                scout.phone = scout.ai_contact_phone
+            if not scout.website and (data.get("website") or "").strip():
+                scout.website = data["website"].strip()[:300]
+            scout.ai_researched_at = datetime.now()
+            scout.ai_status = "done" if data else "error"
+
+            job.tokens_used = total_tokens
+            job.agent_log = json.dumps(log_entries)[:_MAX_LOG_CHARS]
+            job.status = "done"
+
+        except Exception as exc:
+            logger.exception("Scout enrich job %d failed", job_id)
+            job.status = "error"
+            job.error_message = str(exc)
+            if scout:
+                scout.ai_status = "error"
+
+        job.finished_at = datetime.now()
+        db.commit()
+
+
+def _get_search_provider(db: Session) -> str:
+    """The operator's saved Scout/research search provider (default duckduckgo)."""
+    from app.models.settings import AppSetting
+
+    row = db.get(AppSetting, "search_provider")
+    return (row.value if row else "") or "duckduckgo"
 
 
 def _build_email_draft_prompt(prospect: Prospect) -> str:

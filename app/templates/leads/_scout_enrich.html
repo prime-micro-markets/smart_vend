@@ -1,0 +1,59 @@
+<div id="scout-ai-{{ scout.id }}"
+     {% if scout.ai_status in ('pending', 'running') %}
+     hx-get="/leads/scout/enrich/{{ scout.id }}/poll"
+     hx-trigger="load delay:2s"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+  {% if scout.ai_status in ('pending', 'running') %}
+  <div class="d-flex align-items-center gap-2 text-primary small">
+    <span class="spinner-border spinner-border-sm" role="status"></span>
+    <span>Researching {{ scout.name }}… this usually takes 20–40 seconds.</span>
+  </div>
+
+  {% elif scout.ai_status == 'error' %}
+  <div class="alert alert-warning py-2 px-3 small mb-2">
+    <i class="bi bi-exclamation-triangle me-1"></i>AI research didn't complete (search or model error).
+  </div>
+  <form hx-post="/leads/scout/enrich" hx-target="#scout-ai-panel" hx-swap="innerHTML">
+    <input type="hidden" name="osm_id" value="{{ scout.osm_id }}">
+    <input type="hidden" name="name" value="{{ scout.name }}">
+    <input type="hidden" name="venue_type" value="{{ scout.venue_type or '' }}">
+    <input type="hidden" name="lat" value="{{ scout.lat }}">
+    <input type="hidden" name="lng" value="{{ scout.lng }}">
+    <input type="hidden" name="address" value="{{ scout.address or '' }}">
+    <button type="submit" class="btn btn-sm btn-outline-primary">
+      <i class="bi bi-arrow-clockwise me-1"></i>Retry
+    </button>
+  </form>
+
+  {% elif scout.ai_status == 'done' %}
+  <div class="small">
+    <div class="fw-semibold text-primary mb-1"><i class="bi bi-robot me-1"></i>AI deep-dive</div>
+    {% if scout.ai_summary %}<p class="mb-2">{{ scout.ai_summary }}</p>{% endif %}
+    <ul class="list-unstyled mb-2">
+      {% if scout.ai_employees %}<li><i class="bi bi-people me-1 text-muted"></i>Est. employees: {{ scout.ai_employees }}</li>{% endif %}
+      {% if scout.ai_foot_traffic %}<li><i class="bi bi-graph-up me-1 text-muted"></i>Foot traffic: {{ scout.ai_foot_traffic | title }}</li>{% endif %}
+      {% if scout.ai_contact_name %}<li><i class="bi bi-person-badge me-1 text-muted"></i>{{ scout.ai_contact_name }}{% if scout.ai_contact_title %}, {{ scout.ai_contact_title }}{% endif %}</li>{% endif %}
+      {% if scout.ai_contact_email %}<li><i class="bi bi-envelope me-1 text-muted"></i>{{ scout.ai_contact_email }}</li>{% endif %}
+      {% if scout.ai_contact_phone %}<li><i class="bi bi-telephone me-1 text-muted"></i>{{ scout.ai_contact_phone }}</li>{% endif %}
+      {% if scout.ai_has_vending %}<li><i class="bi bi-cup-straw me-1 text-muted"></i>Vending: {{ scout.ai_has_vending }}</li>{% endif %}
+    </ul>
+    <div class="text-muted mb-2" style="font-size:.75rem">
+      <i class="bi bi-info-circle me-1"></i>AI estimates — verify before outreach.
+    </div>
+    {% if scout.status == 'promoted' %}
+    <a href="/sales/{{ scout.promoted_prospect_id }}" class="btn btn-sm btn-outline-info">
+      <i class="bi bi-funnel me-1"></i>View in pipeline
+    </a>
+    {% else %}
+    <form action="/leads/scout/{{ scout.id }}/promote" method="post" class="d-inline">
+      <button type="submit" class="btn btn-sm btn-success"
+              hx-on:click="document.body.dispatchEvent(new Event('refresh-scouts'))">
+        <i class="bi bi-arrow-up-right-circle me-1"></i>Promote to pipeline
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
