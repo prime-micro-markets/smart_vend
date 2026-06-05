@@ -8,6 +8,7 @@ from app.models.inventory import InventoryLog, Product, ProductSource, Supplier
 from app.models.location import Location, Machine
 from app.models.research import ResearchTask
 from app.models.sales import OutreachLog, Prospect
+from app.models.scout import ScoutedLocation
 
 __all__ = [
     "AgentJob",
@@ -23,6 +24,7 @@ __all__ = [
     "Machine",
     "Prospect",
     "OutreachLog",
+    "ScoutedLocation",
     "Supplier",
     "Product",
     "ProductSource",

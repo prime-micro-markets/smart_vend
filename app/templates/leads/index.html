@@ -22,6 +22,13 @@
       <i class="bi bi-bank me-1"></i>Gov Contracts
     </button>
   </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'scout' %}active{% endif %}"
+            id="tab-scout" data-bs-toggle="tab" data-bs-target="#pane-scout"
+            type="button" role="tab">
+      <i class="bi bi-geo-alt-fill me-1"></i>Scout Map
+    </button>
+  </li>
 </ul>
 
 <div class="tab-content border border-top-0 rounded-bottom p-3 bg-body" id="leadsTabContent">
@@ -199,12 +206,114 @@
     {% include "leads/_contracts_tab.html" %}
   </div>
 
+  <!-- ── Scout Map (OpenStreetMap placement prospecting) ───────────────── -->
+  <div class="tab-pane fade {% if active_tab == 'scout' %}show active{% endif %}"
+       id="pane-scout" role="tabpanel" aria-labelledby="tab-scout">
+    {% include "leads/_scout_tab.html" %}
+  </div>
+
 </div>
 
 {% endblock %}
 
 {% block scripts %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
+(function () {
+  // Scout Map — Leaflet over OpenStreetMap tiles. Free, no key. The center marker
+  // is draggable and an L.circle visualizes the search radius; both feed the
+  // hidden lat/lng/radius inputs that the search form posts to /leads/scout/search.
+  var center = [{{ scout_center[0] }}, {{ scout_center[1] }}];
+  var map, centerMarker, radiusCircle, bizLayer;
+
+  function milesToMeters(mi) { return mi * 1609.34; }
+
+  function syncCenterInputs(latlng) {
+    var la = document.getElementById('scout-lat');
+    var ln = document.getElementById('scout-lng');
+    if (la) la.value = latlng.lat.toFixed(6);
+    if (ln) ln.value = latlng.lng.toFixed(6);
+  }
+
+  function currentRadiusMi() {
+    var el = document.getElementById('scout-radius');
+    return el ? parseFloat(el.value) : {{ scout_radius_mi }};
+  }
+
+  function drawRadius() {
+    var m = milesToMeters(currentRadiusMi());
+    if (radiusCircle) radiusCircle.setRadius(m);
+    var lbl = document.getElementById('scout-radius-label');
+    if (lbl) lbl.textContent = currentRadiusMi() + ' mi';
+  }
+
+  function initMap() {
+    if (map) { map.invalidateSize(); return; }
+    map = L.map('scout-map').setView(center, 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    centerMarker = L.marker(center, { draggable: true }).addTo(map);
+    centerMarker.bindTooltip('Drag me to search a new spot', { permanent: false });
+    radiusCircle = L.circle(center, {
+      radius: milesToMeters(currentRadiusMi()),
+      color: '#0d6efd', weight: 1, fillOpacity: 0.07
+    }).addTo(map);
+    bizLayer = L.layerGroup().addTo(map);
+
+    centerMarker.on('drag', function (e) {
+      var ll = e.target.getLatLng();
+      radiusCircle.setLatLng(ll);
+      syncCenterInputs(ll);
+    });
+    syncCenterInputs(centerMarker.getLatLng());
+    drawRadius();
+  }
+
+  // Recenter + plot business markers after a search returns (called from the
+  // results partial's inline script).
+  window.scoutPlot = function (markers, cLat, cLng, radiusMi) {
+    if (!map) initMap();
+    var ll = L.latLng(cLat, cLng);
+    map.setView(ll, map.getZoom());
+    centerMarker.setLatLng(ll);
+    radiusCircle.setLatLng(ll);
+    syncCenterInputs(ll);
+    bizLayer.clearLayers();
+    (markers || []).forEach(function (m) {
+      var hue = m.score >= 70 ? '#198754' : (m.score >= 40 ? '#fd7e14' : '#6c757d');
+      var dot = L.circleMarker([m.lat, m.lng], {
+        radius: 7, color: hue, fillColor: hue, fillOpacity: 0.85, weight: 1
+      }).addTo(bizLayer);
+      dot.bindTooltip(m.name + ' — ' + m.score + '/100');
+      dot.on('click', function () { window.scoutOpenBiz(m.osm_id); });
+    });
+  };
+
+  // Marker click → trigger the matching result card's hidden Details button so
+  // the drill-down loads through HTMX (reuses the same request path).
+  window.scoutOpenBiz = function (osmId) {
+    var card = document.querySelector('[data-osm="' + (window.CSS && CSS.escape ? CSS.escape(osmId) : osmId) + '"]');
+    var btn = card && card.querySelector('.scout-details-btn');
+    if (btn) btn.click();
+  };
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var radiusInput = document.getElementById('scout-radius');
+    if (radiusInput) radiusInput.addEventListener('input', drawRadius);
+    // Init now if the Scout tab is the active one; otherwise wait until it's shown
+    // (Leaflet needs a visible container to size tiles correctly).
+    if (document.querySelector('#pane-scout.active')) initMap();
+    var scoutTabBtn = document.getElementById('tab-scout');
+    if (scoutTabBtn) scoutTabBtn.addEventListener('shown.bs.tab', initMap);
+  });
+})();
+
   new bootstrap.Popover(document.getElementById('preview-mode-help'), {
     trigger: 'hover focus',
     placement: 'right',

@@ -1,0 +1,86 @@
+{% if reason == "unavailable" %}
+<div class="alert alert-danger mb-0">
+  <i class="bi bi-wifi-off me-1"></i>
+  OpenStreetMap (Overpass) is unavailable right now (network error or rate limit). Try again shortly.
+</div>
+{% elif not items %}
+<p class="text-muted small mb-0">
+  <i class="bi bi-inbox me-1"></i>No businesses matched here. Try a larger radius, more venue types,
+  or drag the pin to a denser area.
+</p>
+{% else %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <small class="text-muted">
+    {{ items|length }} opportunit{{ "y" if items|length == 1 else "ies" }} ranked by score{% if center_label %} near {{ center_label.split(",")[0] }}{% endif %}.
+  </small>
+</div>
+<div class="list-group list-group-flush">
+  {% for b in items %}
+  <div class="list-group-item px-0" data-osm="{{ b.osm_id }}">
+    <form>
+      {# Shared hidden fields — values are autoescaped, so apostrophes in names are safe. #}
+      <input type="hidden" name="osm_id" value="{{ b.osm_id }}">
+      <input type="hidden" name="name" value="{{ b.name }}">
+      <input type="hidden" name="venue_type" value="{{ b.venue_type }}">
+      <input type="hidden" name="lat" value="{{ b.lat }}">
+      <input type="hidden" name="lng" value="{{ b.lng }}">
+      <input type="hidden" name="address" value="{{ b.address }}">
+      <input type="hidden" name="phone" value="{{ b.phone }}">
+      <input type="hidden" name="website" value="{{ b.website }}">
+      <input type="hidden" name="has_vending_guess" value="{{ b.has_vending_guess }}">
+      <input type="hidden" name="nearest_food_mi" value="{{ b.nearest_food_mi if b.nearest_food_mi is not none else '' }}">
+      <input type="hidden" name="opportunity_score" value="{{ b.opportunity_score }}">
+      <input type="hidden" name="fit_tags" value="{{ b.fit_tags|tojson }}">
+
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <div class="flex-grow-1">
+          <div class="fw-semibold">{{ b.name }}</div>
+          <div class="mt-1 d-flex flex-wrap gap-1">
+            <span class="badge bg-light text-dark border">{{ b.venue_type | title }}</span>
+            {% for t in b.fit_tags if t != b.venue_type %}
+            <span class="badge bg-success-subtle text-success-emphasis border">{{ t }}</span>
+            {% endfor %}
+          </div>
+          <div class="small text-muted mt-1">
+            {% if b.nearest_food_mi is not none %}Nearest food/store {{ b.nearest_food_mi }} mi{% else %}No food/store in range{% endif %}
+            {% if b.address %} · {{ b.address }}{% endif %}
+          </div>
+        </div>
+        <div class="text-end text-nowrap">
+          <span class="badge fs-6
+            {% if b.opportunity_score >= 70 %}bg-success{% elif b.opportunity_score >= 40 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+            {{ b.opportunity_score }}
+          </span>
+          <div class="mt-2 d-flex flex-column gap-1 align-items-end">
+            <button type="button"
+                    class="scout-details-btn btn btn-sm btn-outline-secondary"
+                    hx-post="/leads/scout/biz" hx-target="#scout-detail" hx-swap="innerHTML">
+              <i class="bi bi-info-circle"></i> Details
+            </button>
+            <span class="scout-save-wrap">
+              {% if b.osm_id in scouted_osm_ids %}
+              <span class="badge bg-success-subtle text-success border border-success-subtle">
+                <i class="bi bi-check-lg me-1"></i>Saved</span>
+              {% else %}
+              <button type="button" class="btn btn-sm btn-outline-primary"
+                      hx-post="/leads/scout/save"
+                      hx-target="closest .scout-save-wrap" hx-swap="innerHTML"
+                      hx-on::after-request="document.body.dispatchEvent(new Event('refresh-scouts'))">
+                <i class="bi bi-star me-1"></i>Save
+              </button>
+              {% endif %}
+            </span>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script>
+  if (window.scoutPlot) {
+    window.scoutPlot({{ markers_json|safe }}, {{ center_lat }}, {{ center_lng }}, {{ radius_mi }});
+  }
+</script>

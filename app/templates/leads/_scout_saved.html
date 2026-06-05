@@ -1,0 +1,52 @@
+{% if not scouted %}
+<div class="card-body">
+  <p class="text-muted small mb-0"><i class="bi bi-inbox me-1"></i>No saved locations yet. Save opportunities from a search to track them here.</p>
+</div>
+{% else %}
+<div class="list-group list-group-flush">
+  {% for s in scouted %}
+  <div class="list-group-item px-3" id="scout-row-{{ s.id }}">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+      <div class="flex-grow-1">
+        <div class="fw-semibold small">
+          {{ s.name }}
+          {% if s.status == "promoted" %}
+          <span class="badge bg-info-subtle text-info-emphasis border ms-1">In pipeline</span>
+          {% endif %}
+        </div>
+        <div class="small text-muted">
+          {{ s.venue_type | title }}
+          {% if s.nearest_food_mi is not none %} · food {{ s.nearest_food_mi }} mi{% endif %}
+          {% if s.address %} · {{ s.address }}{% endif %}
+        </div>
+      </div>
+      <div class="text-end text-nowrap">
+        <span class="badge
+          {% if s.opportunity_score >= 70 %}bg-success{% elif s.opportunity_score >= 40 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+          {{ s.opportunity_score }}
+        </span>
+        <div class="mt-2 d-flex gap-1 justify-content-end">
+          {% if s.status == "promoted" %}
+          <a href="/sales/{{ s.promoted_prospect_id }}" class="btn btn-sm btn-outline-info">
+            <i class="bi bi-funnel me-1"></i>View
+          </a>
+          {% else %}
+          <form action="/leads/scout/{{ s.id }}/promote" method="post" class="d-inline">
+            <button type="submit" class="btn btn-sm btn-outline-success">
+              <i class="bi bi-arrow-up-right-circle me-1"></i>Promote
+            </button>
+          </form>
+          {% endif %}
+          <button class="btn btn-sm btn-outline-danger"
+                  hx-delete="/leads/scout/saved/{{ s.id }}"
+                  hx-target="#scout-row-{{ s.id }}" hx-swap="outerHTML"
+                  title="Remove">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

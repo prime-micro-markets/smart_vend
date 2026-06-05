@@ -1,0 +1,123 @@
+<div class="d-flex justify-content-end mb-2">
+  <button class="btn btn-sm btn-link text-muted p-0" type="button"
+          data-bs-toggle="collapse" data-bs-target="#scout-help" title="Help &amp; instructions">
+    <i class="bi bi-question-circle"></i>
+  </button>
+</div>
+<div class="collapse mb-3" id="scout-help">
+  <div class="card border-info border-opacity-25">
+    <div class="card-body bg-info-subtle rounded small">
+      <strong>Scout Map</strong> — Find smart-cooler placement opportunities on the map.
+      <ul class="mb-0 mt-1">
+        <li>Type a place/address (or just <strong>drag the blue pin</strong>) to set the search center, set the radius, pick venue types, then <strong>Search</strong>.</li>
+        <li>Businesses are pulled from <strong>OpenStreetMap</strong> and ranked by opportunity. Green dots score highest.</li>
+        <li>The strongest signal is <strong>no restaurant/convenience store within {{ "%.0f"|format(3) }} mi</strong> — a captive audience with no food access.</li>
+        <li>Click a dot or a result to see details; <strong>Save</strong> good ones, then <strong>Promote</strong> to your Sales Pipeline.</li>
+      </ul>
+      <div class="mt-2 text-muted">
+        Note: estimated employees, decision-maker contact, and a reliable "already has vending"
+        check come in a later AI step. Phone/website shown here are from OSM
+        {% if places_configured %}and Google Places{% else %}(add a Google Places key for richer contact data){% endif %}.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <!-- Controls -->
+  <div class="col-lg-4">
+    <div class="card border-primary border-opacity-25">
+      <div class="card-header bg-transparent">
+        <h6 class="mb-0 text-primary"><i class="bi bi-sliders me-1"></i>Search Area</h6>
+      </div>
+      <div class="card-body">
+        <form hx-post="/leads/scout/search"
+              hx-target="#scout-results"
+              hx-swap="innerHTML"
+              hx-indicator="#scout-spinner">
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Location</label>
+            <input type="text" name="query" class="form-control form-control-sm"
+                   placeholder="City, address, or place (or drag the pin)">
+            <div class="form-text">Leave blank to use the pin's current spot.</div>
+          </div>
+
+          <input type="hidden" id="scout-lat" name="lat" value="{{ scout_center[0] }}">
+          <input type="hidden" id="scout-lng" name="lng" value="{{ scout_center[1] }}">
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold small d-flex justify-content-between">
+              <span>Radius</span><span id="scout-radius-label" class="text-muted">{{ scout_radius_mi }} mi</span>
+            </label>
+            <input type="range" class="form-range" id="scout-radius" name="radius_mi"
+                   min="0.5" max="25" step="0.5" value="{{ scout_radius_mi }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Venue Types</label>
+            <div class="row row-cols-1 g-1" style="max-height:200px;overflow-y:auto">
+              {% for v in scout_venues %}
+              <div class="col">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="venue_filter"
+                         value="{{ v }}" id="sv_{{ loop.index }}" checked>
+                  <label class="form-check-label small" for="sv_{{ loop.index }}">{{ v | title }}</label>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="bi bi-search me-1"></i>Search This Area
+            <span id="scout-spinner" class="htmx-indicator spinner-border spinner-border-sm ms-1" role="status"></span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Drill-down detail -->
+    <div class="card mt-4">
+      <div class="card-header bg-transparent">
+        <h6 class="mb-0"><i class="bi bi-building me-1"></i>Business Details</h6>
+      </div>
+      <div id="scout-detail" class="card-body">
+        <p class="text-muted small mb-0">Click a business on the map or in the results to see details.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map + results -->
+  <div class="col-lg-8">
+    <div id="scout-map" style="height:460px;border-radius:.5rem;z-index:0"
+         class="border mb-4 bg-body-secondary"></div>
+
+    <div class="card">
+      <div class="card-header bg-transparent">
+        <h6 class="mb-0"><i class="bi bi-list-ul me-1"></i>Opportunities</h6>
+      </div>
+      <div id="scout-results" class="card-body" style="max-height:420px;overflow-y:auto">
+        <p class="text-muted small mb-0">Search an area to see ranked business opportunities.</p>
+      </div>
+    </div>
+
+    <!-- Saved scouts -->
+    <div class="card mt-4">
+      <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-star me-1"></i>Saved Locations</h6>
+        <button class="btn btn-sm btn-outline-secondary"
+                hx-get="/leads/scout/saved/"
+                hx-target="#scout-saved-body"
+                hx-swap="innerHTML">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+      <div id="scout-saved-body" style="max-height:360px;overflow-y:auto"
+           hx-get="/leads/scout/saved/"
+           hx-trigger="refresh-scouts from:body"
+           hx-swap="innerHTML">
+        {% include "leads/_scout_saved.html" %}
+      </div>
+    </div>
+  </div>
+</div>

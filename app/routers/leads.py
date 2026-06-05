@@ -14,7 +14,8 @@ from app.database import get_db
 from app.models.agent import AgentJob
 from app.models.sales import OutreachLog, Prospect
 from app.models.sam_contract import SavedContract
-from app.services import agent, email_sender, sam_gov
+from app.models.scout import ScoutedLocation
+from app.services import agent, email_sender, geo_scout, sam_gov
 from app.views import templates
 
 logger = logging.getLogger(__name__)
@@ -72,12 +73,13 @@ def leads_index(
     )
     current_provider = _get_setting(db, "search_provider", "duckduckgo")
     saved_contracts = db.query(SavedContract).order_by(SavedContract.saved_at.desc()).all()
+    scouted = db.query(ScoutedLocation).order_by(ScoutedLocation.opportunity_score.desc()).all()
     return templates.TemplateResponse(
         request,
         "leads/index.html",
         {
             "active_nav": "leads",
-            "active_tab": tab if tab in ("research", "contracts") else "research",
+            "active_tab": tab if tab in ("research", "contracts", "scout") else "research",
             "jobs": jobs,
             "prospect_names": _prospect_names(db, jobs),
             "venue_options": VENUE_TYPE_OPTIONS,
@@ -90,6 +92,13 @@ def leads_index(
             "other_set_asides": sam_gov.OTHER_SET_ASIDES,
             "notice_types": sam_gov.NOTICE_TYPES,
             "default_naics": sam_gov.DEFAULT_NAICS,
+            # Scout Map tab
+            "scout_venues": geo_scout.SCOUT_VENUE_LABELS,
+            "scout_center": geo_scout.DEFAULT_CENTER,
+            "scout_radius_mi": geo_scout.DEFAULT_RADIUS_MI,
+            "places_configured": bool(settings.google_places_api_key),
+            "scouted": scouted,
+            "scouted_osm_ids": {s.osm_id for s in scouted},
         },
     )
 
@@ -480,6 +489,211 @@ def leads_contracts_saved(request: Request, db: Session = Depends(get_db)) -> HT
 @router.delete("/contracts/saved/{contract_id}", response_class=HTMLResponse)
 def leads_contracts_saved_delete(contract_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
     row = db.get(SavedContract, contract_id)
+    if row:
+        db.delete(row)
+        db.commit()
+    return HTMLResponse(content="", status_code=200)
+
+
+# ── Scout Map (OpenStreetMap placement prospecting) ──────────────────────────
+# Map-based business discovery + opportunity scoring. All /scout/* routes return
+# HTMX partials. Free by default (Overpass/Nominatim); Google Places enriches
+# drill-down when configured. See app/services/geo_scout.py.
+
+
+@router.post("/scout/search", response_class=HTMLResponse)
+def leads_scout_search(
+    request: Request,
+    query: str = Form(""),
+    lat: float = Form(geo_scout.DEFAULT_CENTER[0]),
+    lng: float = Form(geo_scout.DEFAULT_CENTER[1]),
+    radius_mi: float = Form(geo_scout.DEFAULT_RADIUS_MI),
+    venue_filter: list[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    center_label = ""
+    if query.strip():
+        geo = geo_scout.geocode(query)
+        if geo:
+            lat, lng, center_label = geo
+    items, reason = geo_scout.scout(
+        lat=lat, lng=lng, radius_mi=radius_mi, venue_labels=venue_filter or None
+    )
+    scouted_osm_ids = {row[0] for row in db.query(ScoutedLocation.osm_id).all()}
+    markers = [
+        {
+            "osm_id": b.osm_id,
+            "name": b.name,
+            "lat": b.lat,
+            "lng": b.lng,
+            "score": b.opportunity_score,
+            "venue_type": b.venue_type,
+        }
+        for b in items
+    ]
+    return templates.TemplateResponse(
+        request,
+        "leads/_scout_results.html",
+        {
+            "items": items,
+            "reason": reason,
+            "center_lat": lat,
+            "center_lng": lng,
+            "center_label": center_label,
+            "radius_mi": radius_mi,
+            "markers_json": json.dumps(markers),
+            "scouted_osm_ids": scouted_osm_ids,
+        },
+    )
+
+
+@router.post("/scout/biz", response_class=HTMLResponse)
+def leads_scout_biz(
+    request: Request,
+    osm_id: str = Form(...),
+    name: str = Form(...),
+    venue_type: str = Form(""),
+    lat: float = Form(...),
+    lng: float = Form(...),
+    address: str = Form(""),
+    phone: str = Form(""),
+    website: str = Form(""),
+    has_vending_guess: str = Form("unknown"),
+    nearest_food_mi: str = Form(""),
+    opportunity_score: int = Form(0),
+    fit_tags: str = Form("[]"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Drill-down detail panel for one business. Enriches contact data via Google
+    Places when a key is configured; otherwise shows the OSM record."""
+    extra = geo_scout.enrich_place(name, lat, lng)
+    try:
+        tags = json.loads(fit_tags) if fit_tags else []
+    except ValueError:
+        tags = []
+    biz = {
+        "osm_id": osm_id,
+        "name": name,
+        "venue_type": venue_type,
+        "lat": lat,
+        "lng": lng,
+        "address": address,
+        "phone": extra.get("phone") or phone,
+        "website": extra.get("website") or website,
+        "has_vending_guess": has_vending_guess,
+        "nearest_food_mi": nearest_food_mi,
+        "opportunity_score": opportunity_score,
+        "fit_tags": tags,
+        "hours": extra.get("hours"),
+        "rating": extra.get("rating"),
+        "enriched": bool(extra),
+    }
+    is_saved = db.query(ScoutedLocation.id).filter_by(osm_id=osm_id).first() is not None
+    return templates.TemplateResponse(
+        request,
+        "leads/_scout_detail.html",
+        {
+            "biz": biz,
+            "is_saved": is_saved,
+            "places_configured": bool(settings.google_places_api_key),
+        },
+    )
+
+
+@router.post("/scout/save", response_class=HTMLResponse)
+def leads_scout_save(
+    request: Request,
+    osm_id: str = Form(...),
+    name: str = Form(...),
+    venue_type: str = Form(""),
+    lat: float = Form(...),
+    lng: float = Form(...),
+    address: str = Form(""),
+    phone: str = Form(""),
+    website: str = Form(""),
+    has_vending_guess: str = Form("unknown"),
+    nearest_food_mi: str = Form(""),
+    opportunity_score: int = Form(0),
+    fit_tags: str = Form("[]"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Idempotently upsert a scouted business, keyed by osm_id. Returns a 'Saved'
+    badge to swap in place of the Save button."""
+    existing = db.query(ScoutedLocation).filter_by(osm_id=osm_id).first()
+    if not existing:
+        try:
+            food_mi = float(nearest_food_mi) if nearest_food_mi not in ("", "None") else None
+        except ValueError:
+            food_mi = None
+        db.add(
+            ScoutedLocation(
+                osm_id=osm_id,
+                name=name,
+                venue_type=venue_type or None,
+                address=address or None,
+                lat=lat,
+                lng=lng,
+                phone=phone or None,
+                website=website or None,
+                opportunity_score=opportunity_score,
+                nearest_food_mi=food_mi,
+                has_vending_guess=has_vending_guess or "unknown",
+                signals=fit_tags or None,
+            )
+        )
+        db.commit()
+    return HTMLResponse(
+        content=(
+            '<span class="badge bg-success-subtle text-success border border-success-subtle">'
+            '<i class="bi bi-check-lg me-1"></i>Saved</span>'
+        ),
+        status_code=200,
+    )
+
+
+@router.get("/scout/saved/", response_class=HTMLResponse)
+def leads_scout_saved(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    scouted = db.query(ScoutedLocation).order_by(ScoutedLocation.opportunity_score.desc()).all()
+    return templates.TemplateResponse(
+        request,
+        "leads/_scout_saved.html",
+        {"scouted": scouted},
+    )
+
+
+@router.post("/scout/{scout_id}/promote", response_class=HTMLResponse)
+def leads_scout_promote(scout_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
+    """Promote a scouted business into the sales pipeline as a Prospect."""
+    row = db.get(ScoutedLocation, scout_id)
+    if not row:
+        return Response(status_code=404)
+    if row.promoted_prospect_id:
+        return RedirectResponse(url=f"/sales/{row.promoted_prospect_id}", status_code=303)
+    note_bits = [f"Opportunity score {row.opportunity_score}/100 (Scout Map)."]
+    if row.nearest_food_mi is not None:
+        note_bits.append(f"Nearest food/store: {row.nearest_food_mi} mi.")
+    if row.has_vending_guess and row.has_vending_guess != "unknown":
+        note_bits.append(f"Vending: {row.has_vending_guess}.")
+    prospect = Prospect(
+        company_name=row.name,
+        venue_type=row.venue_type,
+        address=row.address,
+        website=row.website,
+        contact_phone=row.phone,
+        source="scout_map",
+        notes=" ".join(note_bits),
+    )
+    db.add(prospect)
+    db.flush()
+    row.status = "promoted"
+    row.promoted_prospect_id = prospect.id
+    db.commit()
+    return RedirectResponse(url=f"/sales/{prospect.id}", status_code=303)
+
+
+@router.delete("/scout/saved/{scout_id}", response_class=HTMLResponse)
+def leads_scout_saved_delete(scout_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
+    row = db.get(ScoutedLocation, scout_id)
     if row:
         db.delete(row)
         db.commit()

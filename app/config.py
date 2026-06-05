@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # degrades to "not configured" instead of erroring. Get a key at
     # https://open.sam.gov/ (Account Details → Public API Key).
     sam_gov_api_key: str = ""
+    # Google Places (New) API key — optional upgrade for the Lead Gen "Scout Map"
+    # tab. When set, drilling into a discovered business enriches it with
+    # phone/website/hours/rating; when unset, the OSM record is shown instead.
+    google_places_api_key: str = ""
     gmail_user: str = ""
     gmail_app_password: str = ""
     # Google Calendar "Appointment Schedule" public booking page URL. The chatbot
