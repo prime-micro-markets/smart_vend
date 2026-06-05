@@ -245,3 +245,6 @@ Thumbs.db
 temperrorlog.txt
 temp*.log
 
+
+# Loose SAM.gov key file (never commit; value lives in .env)
+samdotgovapikey.txt

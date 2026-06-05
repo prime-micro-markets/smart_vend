@@ -80,6 +80,10 @@ UPCs reach products three ways so they don't have to be typed per-SKU: **automat
 
 The equipment catalog (`/equipment/`) is a procurement tool: each `EquipmentUnit` has many `EquipmentSource` rows (one per `Distributor`), so the team compares prices across suppliers (A&M Equipment Sales, VendGuys, Cantaloupe, etc.). `EquipmentUnit.recompute_best_price()` denormalizes the lowest source price onto `price_low/price_high` for fast catalog rendering; `best_source` drives the "best buy" badge. Units are soft-archived (`status="archived"`), never deleted. `is_locked=True` marks curated/verified rows the AI spec-refresh job must skip (it filters out `is_locked`/archived units) — this stopped the price drift that came from unguarded auto-refreshes. `price_is_starting` renders a "Starting at" label for custom-quoted micro-market packages/kiosks. Catalog data is established by three scripts run in `render.yaml` preDeploy: `seed_distributors.py` (idempotent), `curate_equipment.py` (sentinel-guarded; fixes/archives/sources units + adds the curated lineup), and `fetch_equipment_images.py` (downloads real product photos to slug-named files under `static/images/equipment/`, committed so they survive Render's ephemeral FS).
 
+### Gov Contracts (SAM.gov)
+
+The Lead Gen page (`/leads/`) is a Bootstrap tab shell: **Prospect Research** (the original AI research/email flow) and **Gov Contracts**. The contracts tab is a live search over the public SAM.gov Get Opportunities API (`https://api.sam.gov/opportunities/v2/search`) via `app/services/sam_gov.py`. Like the market-reference fetchers it is **degrade-to-empty**: `search_opportunities(...)` returns `(items, total, reason)` and never raises — `reason` is `"not_configured"` (no `SAM_GOV_API_KEY`), `"unavailable"` (network/rate-limit/non-200), or `""` on success, and the UI renders the matching state. Dates are passed as `YYYY-MM-DD` from HTML date inputs and converted to the API's `MM/dd/yyyy`, defaulting to the last 90 days and clamped to the API's 1-year max span. Defaults are tuned for the business: State `FL`, NAICS `454210` (Vending Machine Operators), with veteran set-asides (SDVOSB/VOSB) surfaced first in the dropdown. The `/leads/contracts/*` routes always return HTMX partials. Operators **Save favorites** to the `saved_contracts` table (`app/models/sam_contract.py`, migration `m8n9o0p1q2r3`); saves are idempotent (upsert by SAM `notice_id`). This is reference/lookup only — it does not feed any AI job or the sales pipeline.
+
 ### Templates
 
 `app/views.py` creates the single shared `Jinja2Templates` instance and registers a `fromjson` filter. All routers import `templates` from there. Templates live in `app/templates/<module>/`.
@@ -119,6 +123,8 @@ UPCITEMDB_API_KEY=...
 EBAY_CLIENT_ID=...
 EBAY_CLIENT_SECRET=...
 BLS_API_KEY=...
+# SAM.gov contract search (optional; Gov Contracts tab degrades to "not configured" when unset)
+SAM_GOV_API_KEY=...
 ```
 
 The app starts without any API keys set; AI features return errors until configured. Unknown env vars are ignored (`extra="ignore"` in `app/config.py`), so retired keys won't crash startup. `GROQ_API_KEY` powers the public chatbot (free tier) with a Claude Haiku fallback.

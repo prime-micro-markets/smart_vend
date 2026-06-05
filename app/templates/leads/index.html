@@ -2,165 +2,201 @@
 {% block title %}Lead Generation — Prime Vending{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <h1 class="h3 mb-0"><i class="bi bi-robot me-2"></i>AI Lead Generation</h1>
-  <div class="d-flex align-items-center gap-2">
-    <small class="text-muted d-none d-sm-inline">Claude + Tavily</small>
-    <button class="btn btn-sm btn-link text-muted p-0" type="button"
-            data-bs-toggle="collapse" data-bs-target="#page-help" title="Help &amp; instructions">
-      <i class="bi bi-question-circle"></i>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0"><i class="bi bi-robot me-2"></i>Lead Generation</h1>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-0" id="leadsTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab != 'contracts' %}active{% endif %}"
+            id="tab-research" data-bs-toggle="tab" data-bs-target="#pane-research"
+            type="button" role="tab">
+      <i class="bi bi-search me-1"></i>Prospect Research
     </button>
-  </div>
-</div>
-<div class="collapse mb-3" id="page-help">
-  <div class="card border-info border-opacity-25">
-    <div class="card-body bg-info-subtle rounded small">
-      <strong>AI Lead Generation</strong> — Use Claude AI to research and contact potential vending location partners.
-      <ul class="mb-0 mt-1">
-        <li>Enter a city/area and business type (e.g. "gyms in Panama City, FL") and click <strong>Run Research</strong>.</li>
-        <li>Claude searches the web for matching businesses and generates a prospect list with contact info.</li>
-        <li>Found prospects are added to your <strong>Sales Pipeline</strong> automatically.</li>
-        <li>Review AI-drafted outreach emails in the <strong>Draft Review</strong> section before sending.</li>
-        <li>Token usage shows how much of your Anthropic API quota each run consumed.</li>
-      </ul>
-    </div>
-  </div>
-</div>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'contracts' %}active{% endif %}"
+            id="tab-contracts" data-bs-toggle="tab" data-bs-target="#pane-contracts"
+            type="button" role="tab">
+      <i class="bi bi-bank me-1"></i>Gov Contracts
+    </button>
+  </li>
+</ul>
 
-<!-- Token usage bar -->
-<div class="card border-0 bg-light px-3 py-2 mb-4"
-     id="usage-bar"
-     hx-get="/leads/usage"
-     hx-trigger="load"
-     hx-swap="innerHTML">
-  <span class="text-muted small">Loading usage stats…</span>
-</div>
+<div class="tab-content border border-top-0 rounded-bottom p-3 bg-body" id="leadsTabContent">
 
-<div class="row g-4">
+  <!-- ── Prospect Research ─────────────────────────────────────────────── -->
+  <div class="tab-pane fade {% if active_tab != 'contracts' %}show active{% endif %}"
+       id="pane-research" role="tabpanel" aria-labelledby="tab-research">
 
-  <!-- Research Form -->
-  <div class="col-md-5">
-    <div class="card border-primary border-opacity-25">
-      <div class="card-header bg-transparent">
-        <h6 class="mb-0 text-primary"><i class="bi bi-search me-1"></i>Find New Prospects</h6>
-      </div>
-      <div class="card-body">
-        <form method="post" action="/leads/research">
-
-          <!-- Location -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Location</label>
-            <div class="row g-2">
-              <div class="col-8">
-                <input type="text" name="location_city" class="form-control form-control-sm"
-                       value="Panama City" placeholder="City" required>
-              </div>
-              <div class="col-4">
-                <input type="text" name="location_state" class="form-control form-control-sm"
-                       value="FL" placeholder="State" required>
-              </div>
-            </div>
-            <div class="form-text">Change city/state to search any market.</div>
-          </div>
-
-          <!-- Venue Types -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Venue Types</label>
-            <div class="row row-cols-1 row-cols-sm-2 g-1">
-              {% for opt in venue_options %}
-              <div class="col">
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="venue_types"
-                         value="{{ opt }}" id="vt_{{ loop.index }}" checked>
-                  <label class="form-check-label small" for="vt_{{ loop.index }}">{{ opt | title }}</label>
-                </div>
-              </div>
-              {% endfor %}
-            </div>
-          </div>
-
-          <!-- Search Focus -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">
-              Search Focus / Keywords
-              <span class="text-muted fw-normal small ms-1">(optional)</span>
-            </label>
-            <textarea name="search_focus" class="form-control form-control-sm" rows="2"
-                      placeholder="e.g. focus on high-traffic gyms with parking, avoid small boutique studios"></textarea>
-            <div class="form-text">Extra instructions to guide the AI's search strategy.</div>
-          </div>
-
-          <!-- Max Leads + Preview Mode row -->
-          <div class="row g-2 mb-3">
-            <div class="col-6">
-              <label class="form-label fw-semibold small">Max Leads</label>
-              <input type="number" name="max_leads" class="form-control form-control-sm"
-                     min="5" max="100" step="5" value="20">
-            </div>
-            <div class="col-6 d-flex align-items-end">
-              <div class="form-check mb-1">
-                <input class="form-check-input" type="checkbox" name="preview_mode"
-                       value="true" id="preview_mode">
-                <label class="form-check-label small" for="preview_mode">
-                  <span class="text-warning fw-semibold">Preview Mode</span>
-                  <i id="preview-mode-help"
-                     class="bi bi-shield-exclamation text-warning ms-1"
-                     tabindex="0"
-                     style="cursor:pointer"></i>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <!-- Search Provider -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold small">Search Provider</label>
-            <div class="d-flex gap-3 flex-wrap">
-              <div class="form-check">
-                <input class="form-check-input" type="radio" name="search_provider" value="duckduckgo"
-                       id="sp_ddg" {% if current_provider != 'tavily' %}checked{% endif %}>
-                <label class="form-check-label small" for="sp_ddg">
-                  DuckDuckGo <span class="badge bg-success ms-1">Free</span>
-                </label>
-              </div>
-              <div class="form-check">
-                <input class="form-check-input" type="radio" name="search_provider" value="tavily"
-                       id="sp_tavily" {% if current_provider == 'tavily' %}checked{% endif %}>
-                <label class="form-check-label small" for="sp_tavily">
-                  Tavily <span class="badge bg-secondary ms-1">API key req.</span>
-                  <i class="bi bi-info-circle text-muted ms-1"
-                     data-bs-toggle="tooltip"
-                     title="Prime MM uses Tavily's free tier (~1,000 search tokens/month). DuckDuckGo needs no account or key but is not as good as Tavily."></i>
-                </label>
-              </div>
-            </div>
-            <div class="form-text">Your choice is saved as the default for future searches.</div>
-          </div>
-
-          <button type="submit" class="btn btn-primary">
-            <i class="bi bi-play-fill me-1"></i>Start Research
-          </button>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- Job History -->
-  <div class="col-md-7">
-    <div class="card">
-      <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
-        <h6 class="mb-0"><i class="bi bi-clock-history me-1"></i>Recent Jobs</h6>
-        <button class="btn btn-sm btn-outline-secondary"
-                hx-get="/leads/jobs/"
-                hx-target="#job-history-body"
-                hx-swap="innerHTML">
-          <i class="bi bi-arrow-clockwise"></i>
+    <div class="d-flex justify-content-end mb-2">
+      <div class="d-flex align-items-center gap-2">
+        <small class="text-muted d-none d-sm-inline">Claude + Tavily</small>
+        <button class="btn btn-sm btn-link text-muted p-0" type="button"
+                data-bs-toggle="collapse" data-bs-target="#page-help" title="Help &amp; instructions">
+          <i class="bi bi-question-circle"></i>
         </button>
       </div>
-      <div id="job-history-body" style="max-height:420px;overflow-y:auto">
-        {% include "leads/_job_history.html" %}
+    </div>
+    <div class="collapse mb-3" id="page-help">
+      <div class="card border-info border-opacity-25">
+        <div class="card-body bg-info-subtle rounded small">
+          <strong>AI Lead Generation</strong> — Use Claude AI to research and contact potential vending location partners.
+          <ul class="mb-0 mt-1">
+            <li>Enter a city/area and business type (e.g. "gyms in Panama City, FL") and click <strong>Run Research</strong>.</li>
+            <li>Claude searches the web for matching businesses and generates a prospect list with contact info.</li>
+            <li>Found prospects are added to your <strong>Sales Pipeline</strong> automatically.</li>
+            <li>Review AI-drafted outreach emails in the <strong>Draft Review</strong> section before sending.</li>
+            <li>Token usage shows how much of your Anthropic API quota each run consumed.</li>
+          </ul>
+        </div>
       </div>
     </div>
+
+    <!-- Token usage bar -->
+    <div class="card border-0 bg-light px-3 py-2 mb-4"
+         id="usage-bar"
+         hx-get="/leads/usage"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <span class="text-muted small">Loading usage stats…</span>
+    </div>
+
+    <div class="row g-4">
+
+      <!-- Research Form -->
+      <div class="col-md-5">
+        <div class="card border-primary border-opacity-25">
+          <div class="card-header bg-transparent">
+            <h6 class="mb-0 text-primary"><i class="bi bi-search me-1"></i>Find New Prospects</h6>
+          </div>
+          <div class="card-body">
+            <form method="post" action="/leads/research">
+
+              <!-- Location -->
+              <div class="mb-3">
+                <label class="form-label fw-semibold">Location</label>
+                <div class="row g-2">
+                  <div class="col-8">
+                    <input type="text" name="location_city" class="form-control form-control-sm"
+                           value="Panama City" placeholder="City" required>
+                  </div>
+                  <div class="col-4">
+                    <input type="text" name="location_state" class="form-control form-control-sm"
+                           value="FL" placeholder="State" required>
+                  </div>
+                </div>
+                <div class="form-text">Change city/state to search any market.</div>
+              </div>
+
+              <!-- Venue Types -->
+              <div class="mb-3">
+                <label class="form-label fw-semibold">Venue Types</label>
+                <div class="row row-cols-1 row-cols-sm-2 g-1">
+                  {% for opt in venue_options %}
+                  <div class="col">
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" name="venue_types"
+                             value="{{ opt }}" id="vt_{{ loop.index }}" checked>
+                      <label class="form-check-label small" for="vt_{{ loop.index }}">{{ opt | title }}</label>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              </div>
+
+              <!-- Search Focus -->
+              <div class="mb-3">
+                <label class="form-label fw-semibold">
+                  Search Focus / Keywords
+                  <span class="text-muted fw-normal small ms-1">(optional)</span>
+                </label>
+                <textarea name="search_focus" class="form-control form-control-sm" rows="2"
+                          placeholder="e.g. focus on high-traffic gyms with parking, avoid small boutique studios"></textarea>
+                <div class="form-text">Extra instructions to guide the AI's search strategy.</div>
+              </div>
+
+              <!-- Max Leads + Preview Mode row -->
+              <div class="row g-2 mb-3">
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Max Leads</label>
+                  <input type="number" name="max_leads" class="form-control form-control-sm"
+                         min="5" max="100" step="5" value="20">
+                </div>
+                <div class="col-6 d-flex align-items-end">
+                  <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" name="preview_mode"
+                           value="true" id="preview_mode">
+                    <label class="form-check-label small" for="preview_mode">
+                      <span class="text-warning fw-semibold">Preview Mode</span>
+                      <i id="preview-mode-help"
+                         class="bi bi-shield-exclamation text-warning ms-1"
+                         tabindex="0"
+                         style="cursor:pointer"></i>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Search Provider -->
+              <div class="mb-3">
+                <label class="form-label fw-semibold small">Search Provider</label>
+                <div class="d-flex gap-3 flex-wrap">
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="search_provider" value="duckduckgo"
+                           id="sp_ddg" {% if current_provider != 'tavily' %}checked{% endif %}>
+                    <label class="form-check-label small" for="sp_ddg">
+                      DuckDuckGo <span class="badge bg-success ms-1">Free</span>
+                    </label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="search_provider" value="tavily"
+                           id="sp_tavily" {% if current_provider == 'tavily' %}checked{% endif %}>
+                    <label class="form-check-label small" for="sp_tavily">
+                      Tavily <span class="badge bg-secondary ms-1">API key req.</span>
+                      <i class="bi bi-info-circle text-muted ms-1"
+                         data-bs-toggle="tooltip"
+                         title="Prime MM uses Tavily's free tier (~1,000 search tokens/month). DuckDuckGo needs no account or key but is not as good as Tavily."></i>
+                    </label>
+                  </div>
+                </div>
+                <div class="form-text">Your choice is saved as the default for future searches.</div>
+              </div>
+
+              <button type="submit" class="btn btn-primary">
+                <i class="bi bi-play-fill me-1"></i>Start Research
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Job History -->
+      <div class="col-md-7">
+        <div class="card">
+          <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-clock-history me-1"></i>Recent Jobs</h6>
+            <button class="btn btn-sm btn-outline-secondary"
+                    hx-get="/leads/jobs/"
+                    hx-target="#job-history-body"
+                    hx-swap="innerHTML">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+          </div>
+          <div id="job-history-body" style="max-height:420px;overflow-y:auto">
+            {% include "leads/_job_history.html" %}
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Gov Contracts (SAM.gov) ───────────────────────────────────────── -->
+  <div class="tab-pane fade {% if active_tab == 'contracts' %}show active{% endif %}"
+       id="pane-contracts" role="tabpanel" aria-labelledby="tab-contracts">
+    {% include "leads/_contracts_tab.html" %}
   </div>
 
 </div>

@@ -24,6 +24,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.config import settings
 from app.database import Base, engine
 from app.models import crm as _crm_models  # noqa: F401 — registers CRM models with Base
+from app.models import sam_contract as _sam_contract_models  # noqa: F401 — registers SavedContract
 from app.models import settings as _settings_models  # noqa: F401 — registers AppSetting with Base
 from app.routers import crm as crm_router
 from app.routers import financial, inventory, leads, locations, research, root, sales

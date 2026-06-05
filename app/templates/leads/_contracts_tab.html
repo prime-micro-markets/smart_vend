@@ -1,0 +1,150 @@
+<div class="d-flex justify-content-end mb-2">
+  <button class="btn btn-sm btn-link text-muted p-0" type="button"
+          data-bs-toggle="collapse" data-bs-target="#contracts-help" title="Help &amp; instructions">
+    <i class="bi bi-question-circle"></i>
+  </button>
+</div>
+<div class="collapse mb-3" id="contracts-help">
+  <div class="card border-info border-opacity-25">
+    <div class="card-body bg-info-subtle rounded small">
+      <strong>Gov Contracts (SAM.gov)</strong> — Search live federal contract opportunities.
+      <ul class="mb-0 mt-1">
+        <li>Defaults are tuned for us: State <strong>FL</strong> and NAICS <strong>454210</strong> (Vending Machine Operators). Clear or change any filter.</li>
+        <li>As a veteran-owned business, try the <strong>SDVOSB</strong> / Veteran-Owned set-asides in the dropdown.</li>
+        <li>Click a result title to open the full notice on sam.gov. Click <strong>Save</strong> to keep it in your favorites below.</li>
+        <li>Leave dates blank to search the last 90 days (the API allows up to a 1-year span).</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+{% if not sam_configured %}
+<div class="alert alert-warning d-flex align-items-center" role="alert">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i>
+  <div>
+    <strong>SAM.gov API key not configured.</strong>
+    Set <code>SAM_GOV_API_KEY</code> in your environment to enable contract search.
+    Get a free key at <a href="https://open.sam.gov/" target="_blank" rel="noopener">open.sam.gov</a>
+    (Account Details → Public API Key).
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+
+  <!-- Search Form -->
+  <div class="col-lg-4">
+    <div class="card border-primary border-opacity-25">
+      <div class="card-header bg-transparent">
+        <h6 class="mb-0 text-primary"><i class="bi bi-bank me-1"></i>Search Opportunities</h6>
+      </div>
+      <div class="card-body">
+        <form hx-post="/leads/contracts/search"
+              hx-target="#contract-results"
+              hx-swap="innerHTML"
+              hx-indicator="#contract-spinner">
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Keyword (title)</label>
+            <input type="text" name="keyword" class="form-control form-control-sm"
+                   placeholder="e.g. vending, micro market, refreshment">
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-7">
+              <label class="form-label fw-semibold small">State</label>
+              <input type="text" name="state" class="form-control form-control-sm"
+                     value="FL" maxlength="2" placeholder="FL">
+            </div>
+            <div class="col-5">
+              <label class="form-label fw-semibold small">ZIP</label>
+              <input type="text" name="zip_code" class="form-control form-control-sm"
+                     placeholder="32401">
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">NAICS code</label>
+            <input type="text" name="naics" class="form-control form-control-sm"
+                   value="{{ default_naics }}" maxlength="6" placeholder="454210">
+            <div class="form-text">454210 = Vending Machine Operators. Clear to search all.</div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Set-aside</label>
+            <select name="set_aside" class="form-select form-select-sm">
+              <option value="">Any</option>
+              <optgroup label="Veteran-owned">
+                {% for code, label in veteran_set_asides %}
+                <option value="{{ code }}">{{ label }}</option>
+                {% endfor %}
+              </optgroup>
+              <optgroup label="Other">
+                {% for code, label in other_set_asides %}
+                <option value="{{ code }}">{{ label }}</option>
+                {% endfor %}
+              </optgroup>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Notice type</label>
+            <select name="notice_type" class="form-select form-select-sm">
+              <option value="">Any</option>
+              {% for code, label in notice_types %}
+              <option value="{{ code }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label fw-semibold small">Posted from</label>
+              <input type="date" name="posted_from" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold small">Posted to</label>
+              <input type="date" name="posted_to" class="form-control form-control-sm">
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-sm" {% if not sam_configured %}disabled{% endif %}>
+            <i class="bi bi-search me-1"></i>Search
+            <span id="contract-spinner" class="htmx-indicator spinner-border spinner-border-sm ms-1" role="status"></span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results + Saved -->
+  <div class="col-lg-8">
+    <div class="card mb-4">
+      <div class="card-header bg-transparent">
+        <h6 class="mb-0"><i class="bi bi-list-ul me-1"></i>Results</h6>
+      </div>
+      <div id="contract-results" class="card-body">
+        <p class="text-muted small mb-0">Run a search to see contract opportunities.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-star me-1"></i>Saved Contracts</h6>
+        <button class="btn btn-sm btn-outline-secondary"
+                hx-get="/leads/contracts/saved/"
+                hx-target="#saved-contracts-body"
+                hx-swap="innerHTML">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+      <div id="saved-contracts-body" style="max-height:420px;overflow-y:auto"
+           hx-get="/leads/contracts/saved/"
+           hx-trigger="refresh-saved from:body"
+           hx-swap="innerHTML">
+        {% include "leads/_saved_contracts.html" %}
+      </div>
+    </div>
+  </div>
+
+</div>

@@ -9,10 +9,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func as sql_func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.models.agent import AgentJob
 from app.models.sales import OutreachLog, Prospect
-from app.services import agent, email_sender
+from app.models.sam_contract import SavedContract
+from app.services import agent, email_sender, sam_gov
 from app.views import templates
 
 logger = logging.getLogger(__name__)
@@ -58,7 +60,9 @@ def _prospect_names(db: Session, jobs: list[AgentJob]) -> dict[int, str]:
 
 
 @router.get("/", response_class=HTMLResponse)
-def leads_index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+def leads_index(
+    request: Request, tab: str = "research", db: Session = Depends(get_db)
+) -> HTMLResponse:
     jobs = (
         db.query(AgentJob)
         .filter(AgentJob.job_type.in_(["research", "email_draft"]))
@@ -67,15 +71,25 @@ def leads_index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse
         .all()
     )
     current_provider = _get_setting(db, "search_provider", "duckduckgo")
+    saved_contracts = db.query(SavedContract).order_by(SavedContract.saved_at.desc()).all()
     return templates.TemplateResponse(
         request,
         "leads/index.html",
         {
             "active_nav": "leads",
+            "active_tab": tab if tab in ("research", "contracts") else "research",
             "jobs": jobs,
             "prospect_names": _prospect_names(db, jobs),
             "venue_options": VENUE_TYPE_OPTIONS,
             "current_provider": current_provider,
+            # Gov Contracts tab
+            "sam_configured": bool(settings.sam_gov_api_key),
+            "saved_contracts": saved_contracts,
+            "saved_notice_ids": {c.notice_id for c in saved_contracts},
+            "veteran_set_asides": sam_gov.VETERAN_SET_ASIDES,
+            "other_set_asides": sam_gov.OTHER_SET_ASIDES,
+            "notice_types": sam_gov.NOTICE_TYPES,
+            "default_naics": sam_gov.DEFAULT_NAICS,
         },
     )
 
@@ -358,5 +372,115 @@ def leads_job_delete(job_id: int, db: Session = Depends(get_db)) -> HTMLResponse
     job = db.get(AgentJob, job_id)
     if job and job.job_type in ("research", "email_draft"):
         db.delete(job)
+        db.commit()
+    return HTMLResponse(content="", status_code=200)
+
+
+# ── Gov Contracts (SAM.gov) ──────────────────────────────────────────────────
+# Live federal contract-opportunity search + saved favorites. The /contracts/*
+# routes always return HTMX partials. They're declared after the catch-all-free
+# job routes; none collide with the {job_id} paths.
+
+
+@router.post("/contracts/search", response_class=HTMLResponse)
+def leads_contracts_search(
+    request: Request,
+    keyword: str = Form(""),
+    state: str = Form(""),
+    zip_code: str = Form(""),
+    naics: str = Form(""),
+    set_aside: str = Form(""),
+    notice_type: str = Form(""),
+    posted_from: str = Form(""),
+    posted_to: str = Form(""),
+    offset: int = Form(0),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    items, total, reason = sam_gov.search_opportunities(
+        keyword=keyword,
+        state=state,
+        zip_code=zip_code,
+        naics=naics,
+        set_aside=set_aside,
+        notice_type=notice_type,
+        posted_from=posted_from,
+        posted_to=posted_to,
+        limit=25,
+        offset=offset,
+    )
+    saved_notice_ids = {row[0] for row in db.query(SavedContract.notice_id).all()}
+    return templates.TemplateResponse(
+        request,
+        "leads/_contract_results.html",
+        {
+            "items": items,
+            "total": total,
+            "reason": reason,
+            "offset": offset,
+            "saved_notice_ids": saved_notice_ids,
+        },
+    )
+
+
+@router.post("/contracts/save", response_class=HTMLResponse)
+def leads_contracts_save(
+    request: Request,
+    notice_id: str = Form(...),
+    title: str = Form(...),
+    agency: str = Form(""),
+    notice_type: str = Form(""),
+    posted_date: str = Form(""),
+    response_deadline: str = Form(""),
+    set_aside: str = Form(""),
+    naics_code: str = Form(""),
+    place: str = Form(""),
+    solicitation_number: str = Form(""),
+    ui_link: str = Form(""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Idempotently upsert a saved favorite, keyed by notice_id. Returns the
+    'saved' button state to swap in place of the Save button."""
+    existing = db.query(SavedContract).filter_by(notice_id=notice_id).first()
+    if not existing:
+        db.add(
+            SavedContract(
+                notice_id=notice_id,
+                title=title,
+                agency=agency or None,
+                notice_type=notice_type or None,
+                posted_date=posted_date or None,
+                response_deadline=response_deadline or None,
+                set_aside=set_aside or None,
+                naics_code=naics_code or None,
+                place=place or None,
+                solicitation_number=solicitation_number or None,
+                ui_link=ui_link or None,
+            )
+        )
+        db.commit()
+    return HTMLResponse(
+        content=(
+            '<span class="badge bg-success-subtle text-success border border-success-subtle">'
+            '<i class="bi bi-check-lg me-1"></i>Saved</span>'
+        ),
+        status_code=200,
+    )
+
+
+@router.get("/contracts/saved/", response_class=HTMLResponse)
+def leads_contracts_saved(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    saved_contracts = db.query(SavedContract).order_by(SavedContract.saved_at.desc()).all()
+    return templates.TemplateResponse(
+        request,
+        "leads/_saved_contracts.html",
+        {"saved_contracts": saved_contracts},
+    )
+
+
+@router.delete("/contracts/saved/{contract_id}", response_class=HTMLResponse)
+def leads_contracts_saved_delete(contract_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
+    row = db.get(SavedContract, contract_id)
+    if row:
+        db.delete(row)
         db.commit()
     return HTMLResponse(content="", status_code=200)

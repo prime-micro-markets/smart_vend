@@ -1,0 +1,73 @@
+{% if reason == "not_configured" %}
+<div class="alert alert-warning mb-0">
+  <i class="bi bi-exclamation-triangle-fill me-1"></i>
+  SAM.gov API key not configured. Set <code>SAM_GOV_API_KEY</code> to enable search.
+</div>
+{% elif reason == "unavailable" %}
+<div class="alert alert-danger mb-0">
+  <i class="bi bi-wifi-off me-1"></i>
+  SAM.gov is unavailable right now (network error or rate limit). Try again shortly.
+</div>
+{% elif not items %}
+<p class="text-muted small mb-0">
+  <i class="bi bi-inbox me-1"></i>No opportunities matched these filters. Try a broader keyword,
+  clear the NAICS code, or widen the date range.
+</p>
+{% else %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <small class="text-muted">
+    Showing {{ items|length }} of {{ total }} matching opportunit{{ "y" if total == 1 else "ies" }}.
+  </small>
+</div>
+<div class="list-group list-group-flush">
+  {% for op in items %}
+  <div class="list-group-item px-0">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+      <div class="flex-grow-1">
+        <div class="fw-semibold">
+          {% if op.ui_link %}
+          <a href="{{ op.ui_link }}" target="_blank" rel="noopener">{{ op.title }}</a>
+          {% else %}{{ op.title }}{% endif %}
+        </div>
+        <div class="small text-muted">{{ op.agency }}</div>
+        <div class="mt-1 d-flex flex-wrap gap-1">
+          {% if op.notice_type %}<span class="badge bg-secondary-subtle text-secondary-emphasis border">{{ op.notice_type }}</span>{% endif %}
+          {% if op.set_aside %}<span class="badge bg-primary-subtle text-primary-emphasis border">{{ op.set_aside }}</span>{% endif %}
+          {% if op.naics_code %}<span class="badge bg-light text-dark border">NAICS {{ op.naics_code }}</span>{% endif %}
+          {% if op.place %}<span class="badge bg-light text-dark border"><i class="bi bi-geo-alt me-1"></i>{{ op.place }}</span>{% endif %}
+        </div>
+        <div class="small text-muted mt-1">
+          {% if op.posted_date %}Posted {{ op.posted_date[:10] }}{% endif %}
+          {% if op.response_deadline %} · <span class="text-danger-emphasis">Due {{ op.response_deadline[:10] }}</span>{% endif %}
+          {% if op.solicitation_number %} · Sol# {{ op.solicitation_number }}{% endif %}
+        </div>
+      </div>
+      <div class="text-nowrap">
+        {% if op.notice_id in saved_notice_ids %}
+        <span class="badge bg-success-subtle text-success border border-success-subtle">
+          <i class="bi bi-check-lg me-1"></i>Saved</span>
+        {% else %}
+        <form hx-post="/leads/contracts/save" hx-swap="outerHTML">
+          <input type="hidden" name="notice_id" value="{{ op.notice_id }}">
+          <input type="hidden" name="title" value="{{ op.title }}">
+          <input type="hidden" name="agency" value="{{ op.agency }}">
+          <input type="hidden" name="notice_type" value="{{ op.notice_type }}">
+          <input type="hidden" name="posted_date" value="{{ op.posted_date }}">
+          <input type="hidden" name="response_deadline" value="{{ op.response_deadline }}">
+          <input type="hidden" name="set_aside" value="{{ op.set_aside }}">
+          <input type="hidden" name="naics_code" value="{{ op.naics_code }}">
+          <input type="hidden" name="place" value="{{ op.place }}">
+          <input type="hidden" name="solicitation_number" value="{{ op.solicitation_number }}">
+          <input type="hidden" name="ui_link" value="{{ op.ui_link }}">
+          <button type="submit" class="btn btn-sm btn-outline-primary"
+                  hx-on::after-request="document.body.dispatchEvent(new Event('refresh-saved'))">
+            <i class="bi bi-star me-1"></i>Save
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

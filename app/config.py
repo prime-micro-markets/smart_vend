@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     ebay_client_id: str = ""
     ebay_client_secret: str = ""
     bls_api_key: str = ""
+
+    # SAM.gov public API key — powers the Gov Contracts tab in Lead Gen (live
+    # federal contract-opportunity search). Optional: when unset, the search
+    # degrades to "not configured" instead of erroring. Get a key at
+    # https://open.sam.gov/ (Account Details → Public API Key).
+    sam_gov_api_key: str = ""
     gmail_user: str = ""
     gmail_app_password: str = ""
     # Google Calendar "Appointment Schedule" public booking page URL. The chatbot
