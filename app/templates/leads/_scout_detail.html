@@ -23,6 +23,11 @@
   <li><i class="bi bi-cup-straw me-1 text-muted"></i>Vending nearby: {{ biz.has_vending_guess }}</li>
   {% if biz.phone %}<li><i class="bi bi-telephone me-1 text-muted"></i>{{ biz.phone }}</li>{% endif %}
   {% if biz.website %}<li><i class="bi bi-globe me-1 text-muted"></i><a href="{{ biz.website }}" target="_blank" rel="noopener">{{ biz.website }}</a></li>{% endif %}
+  <li><i class="bi bi-google me-1 text-muted"></i>
+    <a href="https://www.google.com/search?q={{ (biz.name ~ ' ' ~ biz.address)|trim|urlencode }}" target="_blank" rel="noopener">Look up on Google</a>
+    {% if biz.website %} · {% endif %}
+    <a href="https://www.google.com/maps/search/?api=1&query={{ biz.lat }},{{ biz.lng }}" target="_blank" rel="noopener">Open in Maps</a>
+  </li>
   {% if biz.rating is not none %}<li><i class="bi bi-star-fill me-1 text-warning"></i>{{ biz.rating }} (Google)</li>{% endif %}
   {% if biz.hours %}<li><i class="bi bi-clock me-1 text-muted"></i>
     {% for line in biz.hours %}<div class="ms-3">{{ line }}</div>{% endfor %}

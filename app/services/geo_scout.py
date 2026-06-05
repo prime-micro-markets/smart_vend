@@ -35,11 +35,21 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 25.0
+_TIMEOUT = 45.0
 _NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Public Overpass mirrors, tried in order — the main instance rate-limits quickly,
+# so we fail over to others on 429/504/timeout before giving up.
+_OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
 # Nominatim/Overpass etiquette: identify the app in the User-Agent.
 _UA = "PrimeMicroMarkets-SmartVend/1.0 (+https://primemicromarkets.com)"
+
+# Food/convenience competition tags (regex bodies for the Overpass selectors).
+_FOOD_AMENITIES = "restaurant|fast_food|cafe|food_court"
+_FOOD_SHOPS = "convenience|supermarket"
 
 _MILE_M = 1609.34
 _FOOD_BUFFER_MI = 3.0  # "no food within 3 mi" radius around each business
@@ -162,17 +172,24 @@ def geocode(query: str) -> tuple[float, float, str] | None:
 
 # ── Overpass helpers ────────────────────────────────────────────────────────
 def _overpass(query: str) -> list[dict] | None:
-    """POST an Overpass QL query, return the ``elements`` list or None on failure."""
-    try:
-        with httpx.Client(timeout=_TIMEOUT, headers={"User-Agent": _UA}) as client:
-            resp = client.post(_OVERPASS_URL, data={"data": query})
-        if resp.status_code != 200:
-            logger.info("Overpass returned %s: %s", resp.status_code, resp.text[:200])
-            return None
-        return resp.json().get("elements") or []
-    except Exception:
-        logger.warning("Overpass request failed", exc_info=True)
-        return None
+    """POST an Overpass QL query, failing over across mirrors. Returns the
+    ``elements`` list, or None only when every endpoint failed."""
+    with httpx.Client(timeout=_TIMEOUT, headers={"User-Agent": _UA}) as client:
+        for url in _OVERPASS_ENDPOINTS:
+            try:
+                resp = client.post(url, data={"data": query})
+            except Exception:
+                logger.info("Overpass endpoint %s unreachable", url, exc_info=True)
+                continue
+            if resp.status_code == 200:
+                try:
+                    return resp.json().get("elements") or []
+                except ValueError:
+                    logger.info("Overpass %s returned non-JSON body", url)
+                    continue
+            # 429 (rate limit) / 504 (timeout) / 5xx — try the next mirror.
+            logger.info("Overpass %s returned %s: %s", url, resp.status_code, resp.text[:150])
+    return None
 
 
 def _clause(filters: list[tuple[str, str | None]], lat: float, lng: float, r_m: float) -> str:
@@ -221,20 +238,34 @@ def haversine_mi(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> floa
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def _context_query(lat: float, lng: float, r_m: float) -> str:
-    """Food/convenience + vending POIs within r_m (radius already includes the
-    3-mile food buffer)."""
-    food = (
-        f'nwr["amenity"~"restaurant|fast_food|cafe"](around:{r_m:.0f},{lat},{lng});'
-        f'nwr["shop"~"convenience|supermarket"](around:{r_m:.0f},{lat},{lng});'
+def _combined_query(lat: float, lng: float, r_m: float, venues: list[VenueDef]) -> str:
+    """A single Overpass query that returns candidate businesses (within r_m) AND
+    food/convenience + vending POIs (within r_m + the 3-mile buffer).
+
+    Doing both in one request halves the call count (less rate-limiting) and, more
+    importantly, removes the failure mode where a *separate* food call could fail
+    and make every business look like a food desert. Elements are told apart in
+    ``_context_kind`` by their tags after parsing."""
+    biz = "".join(_clause(v.filters, lat, lng, r_m) for v in venues)
+    ctx_r = r_m + _FOOD_BUFFER_MI * _MILE_M
+    ctx = (
+        f'nwr["amenity"~"{_FOOD_AMENITIES}"](around:{ctx_r:.0f},{lat},{lng});'
+        f'nwr["shop"~"{_FOOD_SHOPS}"](around:{ctx_r:.0f},{lat},{lng});'
+        f'nwr["amenity"="vending_machine"](around:{ctx_r:.0f},{lat},{lng});'
     )
-    vending = f'nwr["amenity"="vending_machine"](around:{r_m:.0f},{lat},{lng});'
-    return f"[out:json][timeout:25];({food}{vending});out center;"
+    return f"[out:json][timeout:50];({biz}{ctx});out center tags;"
 
 
-def _business_query(lat: float, lng: float, r_m: float, venues: list[VenueDef]) -> str:
-    clauses = "".join(_clause(v.filters, lat, lng, r_m) for v in venues)
-    return f"[out:json][timeout:25];({clauses});out center tags;"
+def _context_kind(tags: dict) -> str | None:
+    """Classify a returned element as a context POI: 'food', 'vending', or None
+    (meaning it's not a context POI — treat it as a candidate business)."""
+    if tags.get("amenity") == "vending_machine":
+        return "vending"
+    amenity = tags.get("amenity", "")
+    shop = tags.get("shop", "")
+    if amenity in _FOOD_AMENITIES.split("|") or shop in _FOOD_SHOPS.split("|"):
+        return "food"
+    return None
 
 
 def _score(
@@ -278,41 +309,46 @@ def scout(
     if not wanted:
         wanted = SCOUT_VENUES
 
-    elements = _overpass(_business_query(lat, lng, r_m, wanted))
+    # One combined call returns businesses + food/vending context together. If it
+    # fails outright we report "unavailable"; if it succeeds, the food data is
+    # present, so "no food nearby" is a real signal (not a hidden failed call).
+    elements = _overpass(_combined_query(lat, lng, r_m, wanted))
     if elements is None:
         return [], "unavailable"
 
-    # Context POIs cover radius + 3 mi so every in-radius business has full coverage.
-    ctx = _overpass(_context_query(lat, lng, r_m + _FOOD_BUFFER_MI * _MILE_M)) or []
+    # First pass: split context POIs (food / vending) out from candidate businesses.
     food_pts: list[tuple[float, float]] = []
     vending_pts: list[tuple[float, float]] = []
-    for el in ctx:
-        pt = _coords(el)
-        if not pt:
-            continue
-        if (el.get("tags") or {}).get("amenity") == "vending_machine":
-            vending_pts.append(pt)
-        else:
-            food_pts.append(pt)
-
-    items: list[ScoutBiz] = []
+    candidates: list[tuple[dict, tuple[float, float]]] = []
     seen: set[str] = set()
     for el in elements:
         tags = el.get("tags") or {}
-        name = (tags.get("name") or "").strip()
-        if not name:
-            continue  # unnamed POIs aren't actionable prospects
         pt = _coords(el)
         if not pt:
+            continue
+        kind = _context_kind(tags)
+        if kind == "vending":
+            vending_pts.append(pt)
+            continue
+        if kind == "food":
+            food_pts.append(pt)
             continue
         osm_id = f"{el.get('type')}/{el.get('id')}"
         if osm_id in seen:
             continue
         seen.add(osm_id)
+        candidates.append((el, pt))
+
+    items: list[ScoutBiz] = []
+    for el, (b_lat, b_lng) in candidates:
+        tags = el.get("tags") or {}
+        name = (tags.get("name") or "").strip()
+        if not name:
+            continue  # unnamed POIs aren't actionable prospects
         venue = _classify(tags)
         if not venue:
             continue
-        b_lat, b_lng = pt
+        osm_id = f"{el.get('type')}/{el.get('id')}"
 
         nearest_food = min(
             (haversine_mi(b_lat, b_lng, f_lat, f_lng) for f_lat, f_lng in food_pts),
