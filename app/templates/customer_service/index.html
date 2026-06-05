@@ -77,6 +77,11 @@
     </button>
   </li>
   <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-availability" type="button">
+      <i class="bi bi-calendar-week me-1"></i>Availability
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ai" type="button">
       <i class="bi bi-cpu me-1"></i>AI Settings
     </button>
@@ -153,7 +158,36 @@
     {% include "customer_service/_chat_history.html" %}
   </div>
 
-  <!-- Tab 5: AI Settings -->
+  <!-- Tab 5: Availability -->
+  <div class="tab-pane fade" id="tab-availability">
+    <div class="d-flex align-items-center justify-content-end pt-1 mb-1">
+      <button class="btn btn-sm btn-link text-muted p-0" type="button"
+              data-bs-toggle="collapse" data-bs-target="#help-availability" title="Help &amp; instructions">
+        <i class="bi bi-question-circle"></i>
+      </button>
+    </div>
+    <div class="collapse mb-3" id="help-availability">
+      <div class="card border-info border-opacity-25">
+        <div class="card-body bg-info-subtle rounded small">
+          <strong>Availability</strong> — Set the consultation times the customer-facing chatbot offers.
+          <ul class="mb-0 mt-1">
+            <li>Turn each day on or off and set its own open/close hours (e.g. shorter hours on Saturday).</li>
+            <li>The chatbot still reads your connected Google Calendar's free/busy and only offers times that are actually open within these hours.</li>
+            <li>Slot length, how many days ahead to offer, the max times shown, and the timezone apply to every day.</li>
+            <li>Changes apply immediately — no restart required.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div id="availability-content"
+         hx-get="/customer-service/availability" hx-trigger="cs-load once" hx-swap="innerHTML">
+      <div class="text-center text-muted py-4 small">
+        <div class="spinner-border spinner-border-sm me-2"></div>Loading…
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 6: AI Settings -->
   <div class="tab-pane fade" id="tab-ai">
     <div class="d-flex align-items-center justify-content-end pt-1 mb-1">
       <button class="btn btn-sm btn-link text-muted p-0" type="button"

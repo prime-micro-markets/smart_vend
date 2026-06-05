@@ -56,8 +56,8 @@ def locations_map_data(db: Session = Depends(get_db)) -> JSONResponse:
         .all()
     )
 
-    def loc_addr(l: Location) -> str:
-        parts = [l.address, l.city, f"{l.state} {l.zip_code or ''}".strip()]
+    def loc_addr(loc: Location) -> str:
+        parts = [loc.address, loc.city, f"{loc.state} {loc.zip_code or ''}".strip()]
         return ", ".join(p for p in parts if p)
 
     def lead_addr(p: Prospect) -> str:
@@ -68,15 +68,15 @@ def locations_map_data(db: Session = Depends(get_db)) -> JSONResponse:
         {
             "locations": [
                 {
-                    "id": l.id,
-                    "name": l.name,
-                    "address": loc_addr(l),
-                    "status": l.status,
-                    "venue_type": l.venue_type or "",
-                    "contact_name": l.contact_name or "",
-                    "url": f"/locations/{l.id}",
+                    "id": loc.id,
+                    "name": loc.name,
+                    "address": loc_addr(loc),
+                    "status": loc.status,
+                    "venue_type": loc.venue_type or "",
+                    "contact_name": loc.contact_name or "",
+                    "url": f"/locations/{loc.id}",
                 }
-                for l in locs
+                for loc in locs
             ],
             "leads": [
                 {

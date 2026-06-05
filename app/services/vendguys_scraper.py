@@ -108,14 +108,14 @@ def scrape_url(url: str) -> tuple[str, str | None]:
 
     # Fallback: first non-UI img[src] with an image extension
     if not og_image:
-        _SKIP = {"logo", "icon", "flag", "banner", "footer", "nav", "avatar", "sprite", "badge"}
+        skip = {"logo", "icon", "flag", "banner", "footer", "nav", "avatar", "sprite", "badge"}
         for img_url in re.findall(
             r'<img[^>]+src=["\']([^"\']+\.(?:jpg|jpeg|png|webp)(?:\?[^"\']*)?)["\']',
             html,
             re.IGNORECASE,
         ):
             low = img_url.lower()
-            if not any(s in low for s in _SKIP):
+            if not any(s in low for s in skip):
                 og_image = img_url.strip()
                 break
 

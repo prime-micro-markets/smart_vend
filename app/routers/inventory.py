@@ -199,7 +199,7 @@ def supplier_create(
     except Exception:
         db.rollback()
         logger.exception("Failed to create supplier %s", name)
-        raise HTTPException(status_code=500, detail="Database error saving supplier")
+        raise HTTPException(status_code=500, detail="Database error saving supplier") from None
     return RedirectResponse(url="/inventory/?tab=suppliers", status_code=303)
 
 
@@ -577,7 +577,7 @@ def inventory_search_run(
     except Exception:
         db.rollback()
         logger.exception("Failed to create inventory search job")
-        raise HTTPException(status_code=500, detail="Database error creating job")
+        raise HTTPException(status_code=500, detail="Database error creating job") from None
     background_tasks.add_task(inventory_agent.run_inventory_search_job, job.id)
     return RedirectResponse(url=f"/inventory/search/{job.id}", status_code=303)
 
@@ -742,7 +742,7 @@ def product_create(
     except Exception:
         db.rollback()
         logger.exception("Failed to create product %s", resolved_sku)
-        raise HTTPException(status_code=500, detail="Database error saving product")
+        raise HTTPException(status_code=500, detail="Database error saving product") from None
     return RedirectResponse(url="/inventory/", status_code=303)
 
 

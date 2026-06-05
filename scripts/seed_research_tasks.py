@@ -96,26 +96,28 @@ def parse_markdown(md_path: Path) -> list[dict]:
             if bullet:
                 n = section_task_counts.get(9, 0) + 1
                 section_task_counts[9] = n
-                tasks.append({
-                    "task_number": f"9.{n}",
-                    "section": 9,
-                    "section_name": SECTION_NAMES[9],
-                    "what": bullet.group(1).strip(),
-                    "why": None,
-                    "how_source": bullet.group(2).strip() or None,
-                    "owner": None,
-                    "due_date_raw": None,
-                    "status": "not_started",
-                    "priority": "medium",
-                    "notes": None,
-                    "is_strategic_decision": False,
-                })
+                tasks.append(
+                    {
+                        "task_number": f"9.{n}",
+                        "section": 9,
+                        "section_name": SECTION_NAMES[9],
+                        "what": bullet.group(1).strip(),
+                        "why": None,
+                        "how_source": bullet.group(2).strip() or None,
+                        "owner": None,
+                        "due_date_raw": None,
+                        "status": "not_started",
+                        "priority": "medium",
+                        "notes": None,
+                        "is_strategic_decision": False,
+                    }
+                )
             continue
 
         # Table header — detect columns (match "What" as a full cell, not a substring)
-        if line.strip().startswith("|") and re.search(r'\|\s*What\s*\|', line):
+        if line.strip().startswith("|") and re.search(r"\|\s*What\s*\|", line):
             in_table = True
-            has_priority_col = bool(re.search(r'\|\s*Priority\s*\|', line, re.IGNORECASE))
+            has_priority_col = bool(re.search(r"\|\s*Priority\s*\|", line, re.IGNORECASE))
             continue
 
         if _is_separator(line):
@@ -138,45 +140,49 @@ def parse_markdown(md_path: Path) -> list[dict]:
             target_res = cells[3] if len(cells) > 3 else ""
             if not decision:
                 continue
-            tasks.append({
-                "task_number": task_num if re.match(r"\d+\.\d+", task_num) else f"8.{n}",
-                "section": 8,
-                "section_name": SECTION_NAMES[8],
-                "what": decision,
-                "why": None,
-                "how_source": inputs_needed or None,
-                "owner": None,
-                "due_date_raw": target_res or None,
-                "status": "not_started",
-                "priority": "medium",
-                "notes": None,
-                "is_strategic_decision": True,
-            })
+            tasks.append(
+                {
+                    "task_number": task_num if re.match(r"\d+\.\d+", task_num) else f"8.{n}",
+                    "section": 8,
+                    "section_name": SECTION_NAMES[8],
+                    "what": decision,
+                    "why": None,
+                    "how_source": inputs_needed or None,
+                    "owner": None,
+                    "due_date_raw": target_res or None,
+                    "status": "not_started",
+                    "priority": "medium",
+                    "notes": None,
+                    "is_strategic_decision": True,
+                }
+            )
         else:
             # Sections 1–7
-            # With priority col:    # | What | Priority | Why | How/Source | Owner/Due | Status | Notes
-            # Without priority col: # | What | Why | How/Source | Owner/Due | Status | Notes
+            # With priority col:
+            #   # | What | Priority | Why | How/Source | Owner/Due | Status | Notes
+            # Without priority col:
+            #   # | What | Why | How/Source | Owner/Due | Status | Notes
             if len(cells) < 2:
                 continue
 
             task_num_raw = cells[0]
 
             if has_priority_col:
-                what        = cells[1] if len(cells) > 1 else ""
-                priority    = _parse_priority(cells[2]) if len(cells) > 2 else "medium"
-                why         = cells[3] if len(cells) > 3 else ""
-                how_source  = cells[4] if len(cells) > 4 else ""
-                owner_due   = cells[5] if len(cells) > 5 else ""
-                status_raw  = cells[6] if len(cells) > 6 else ""
-                notes       = cells[7] if len(cells) > 7 else ""
+                what = cells[1] if len(cells) > 1 else ""
+                priority = _parse_priority(cells[2]) if len(cells) > 2 else "medium"
+                why = cells[3] if len(cells) > 3 else ""
+                how_source = cells[4] if len(cells) > 4 else ""
+                owner_due = cells[5] if len(cells) > 5 else ""
+                status_raw = cells[6] if len(cells) > 6 else ""
+                notes = cells[7] if len(cells) > 7 else ""
             else:
-                what        = cells[1] if len(cells) > 1 else ""
-                priority    = "medium"
-                why         = cells[2] if len(cells) > 2 else ""
-                how_source  = cells[3] if len(cells) > 3 else ""
-                owner_due   = cells[4] if len(cells) > 4 else ""
-                status_raw  = cells[5] if len(cells) > 5 else ""
-                notes       = cells[6] if len(cells) > 6 else ""
+                what = cells[1] if len(cells) > 1 else ""
+                priority = "medium"
+                why = cells[2] if len(cells) > 2 else ""
+                how_source = cells[3] if len(cells) > 3 else ""
+                owner_due = cells[4] if len(cells) > 4 else ""
+                status_raw = cells[5] if len(cells) > 5 else ""
+                notes = cells[6] if len(cells) > 6 else ""
 
             if not what or what.lower() in ("what", "task", "#"):
                 continue
@@ -184,25 +190,27 @@ def parse_markdown(md_path: Path) -> list[dict]:
             n = section_task_counts.get(current_section, 0) + 1
             section_task_counts[current_section] = n
             task_number = (
-                task_num_raw
-                if re.match(r"\d+\.\d+", task_num_raw)
-                else f"{current_section}.{n}"
+                task_num_raw if re.match(r"\d+\.\d+", task_num_raw) else f"{current_section}.{n}"
             )
 
-            tasks.append({
-                "task_number": task_number,
-                "section": current_section,
-                "section_name": SECTION_NAMES.get(current_section, f"Section {current_section}"),
-                "what": what,
-                "why": why or None,
-                "how_source": how_source or None,
-                "owner": owner_due or None,
-                "due_date_raw": None,
-                "status": _parse_status(status_raw),
-                "priority": priority,
-                "notes": notes or None,
-                "is_strategic_decision": False,
-            })
+            tasks.append(
+                {
+                    "task_number": task_number,
+                    "section": current_section,
+                    "section_name": SECTION_NAMES.get(
+                        current_section, f"Section {current_section}"
+                    ),
+                    "what": what,
+                    "why": why or None,
+                    "how_source": how_source or None,
+                    "owner": owner_due or None,
+                    "due_date_raw": None,
+                    "status": _parse_status(status_raw),
+                    "priority": priority,
+                    "notes": notes or None,
+                    "is_strategic_decision": False,
+                }
+            )
 
     return tasks
 
@@ -214,9 +222,7 @@ def seed(md_path: Path) -> None:
 
     inserted = updated = 0
     with Session(engine) as db:
-        existing: dict[str, ResearchTask] = {
-            t.task_number: t for t in db.query(ResearchTask).all()
-        }
+        existing: dict[str, ResearchTask] = {t.task_number: t for t in db.query(ResearchTask).all()}
         for t in tasks:
             row = existing.get(t["task_number"])
             if row is None:

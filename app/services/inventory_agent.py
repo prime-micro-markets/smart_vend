@@ -147,7 +147,7 @@ def run_inventory_search_job(job_id: int) -> None:
 
             system_prompt = _build_system_prompt(categories, location, search_focus, max_results)
 
-            _COMPILE_INSTRUCTION = (
+            compile_instruction = (
                 "Search limit reached. Now output your final supplier list.\n"
                 "CRITICAL: You MUST include suppliers from your own training knowledge — "
                 "Sysco, US Foods, Performance Food Group, Sam's Club, Costco, "
@@ -248,7 +248,7 @@ def run_inventory_search_job(job_id: int) -> None:
                         {
                             "role": "user",
                             "content": tool_results
-                            + [{"type": "text", "text": _COMPILE_INSTRUCTION}],
+                            + [{"type": "text", "text": compile_instruction}],
                         }
                     )
                     needs_compile = True

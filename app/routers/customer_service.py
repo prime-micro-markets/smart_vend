@@ -9,8 +9,6 @@ from collections import defaultdict
 from datetime import date as date_type
 from datetime import datetime, timedelta
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func as sql_func
@@ -24,6 +22,8 @@ from app.models.settings import AppSetting
 from app.services import cs_manager_agent
 from app.services.auth import require_user
 from app.views import templates
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/customer-service", tags=["customer_service"])
 
@@ -680,10 +680,11 @@ def cs_manager_chat(
         f'<div class="chat-msg chat-msg--user">'
         f'<div class="chat-bubble chat-bubble--user">{message.strip()}</div></div>'
     )
+    asst_ts = asst_msg.created_at.strftime("%H:%M") if asst_msg.created_at else ""
     asst_html = (
         f'<div class="chat-msg chat-msg--assistant">'
         f'<div class="chat-bubble chat-bubble--assistant">{reply}</div>'
-        f'<div class="chat-ts">{asst_msg.created_at.strftime("%H:%M") if asst_msg.created_at else ""}</div>'
+        f'<div class="chat-ts">{asst_ts}</div>'
         f"</div>"
     )
     return HTMLResponse(content=user_html + asst_html)
@@ -693,7 +694,10 @@ def cs_manager_chat(
 
 
 def _parse_dt(v: object) -> datetime | None:
-    """Coerce a value to datetime — SQLite aggregate functions return ISO strings, not datetime objects."""
+    """Coerce a value to datetime.
+
+    SQLite aggregate functions return ISO strings, not datetime objects.
+    """
     if v is None:
         return None
     if isinstance(v, datetime):
@@ -870,4 +874,124 @@ def cs_ai_settings_save(
     return HTMLResponse(
         f'<span class="text-success"><i class="bi bi-check-circle me-1"></i>'
         f"Saved — chatbot now using <strong>{provider}</strong> / <strong>{model}</strong></span>"
+    )
+
+
+# ── Availability hours (chatbot consultation scheduling) ───────────────────────
+
+# (weekday int, label) — Monday = 0 to match Python's date.weekday().
+_WEEKDAYS: list[tuple[int, str]] = [
+    (0, "Monday"),
+    (1, "Tuesday"),
+    (2, "Wednesday"),
+    (3, "Thursday"),
+    (4, "Friday"),
+    (5, "Saturday"),
+    (6, "Sunday"),
+]
+
+# (IANA name, friendly label) for the timezone picker.
+_TIMEZONES: list[tuple[str, str]] = [
+    ("America/New_York", "Eastern (New York)"),
+    ("America/Chicago", "Central (Chicago)"),
+    ("America/Denver", "Mountain (Denver)"),
+    ("America/Phoenix", "Arizona (no DST)"),
+    ("America/Los_Angeles", "Pacific (Los Angeles)"),
+    ("America/Anchorage", "Alaska (Anchorage)"),
+    ("Pacific/Honolulu", "Hawaii (Honolulu)"),
+]
+
+# Tunable global window fields shown alongside the per-day hours. (key, label, help, min, max)
+_AVAIL_INT_FIELDS: list[tuple[str, str, str, int, int]] = [
+    ("cal_slot_minutes", "Slot Length (min)", "Length of each consultation slot", 5, 480),
+    ("cal_lookahead_days", "Days Ahead", "How many days out to offer times", 1, 60),
+    ("cal_max_slots", "Max Times Shown", "Cap on how many openings to list at once", 1, 50),
+]
+
+
+def _hour_label(hour: int) -> str:
+    """24h int -> friendly label, e.g. 0 -> '12:00 AM', 13 -> '1:00 PM'."""
+    suffix = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:00 {suffix}"
+
+
+_HOUR_CHOICES: list[tuple[int, str]] = [(h, _hour_label(h)) for h in range(24)]
+
+
+@router.get("/availability", response_class=HTMLResponse)
+def cs_availability(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    from app.services.google_calendar import booking_enabled, load_scheduling_config
+
+    cfg = load_scheduling_config(db)
+    day_rows = []
+    for n, label in _WEEKDAYS:
+        hours = cfg.day_hours.get(n)
+        day_rows.append(
+            {
+                "n": n,
+                "label": label,
+                "enabled": hours is not None,
+                "open": hours[0] if hours else 9,
+                "close": hours[1] if hours else 17,
+            }
+        )
+    int_values = {
+        "cal_slot_minutes": cfg.slot_minutes,
+        "cal_lookahead_days": cfg.lookahead_days,
+        "cal_max_slots": cfg.max_slots,
+    }
+    return templates.TemplateResponse(
+        request,
+        "customer_service/_availability.html",
+        {
+            "day_rows": day_rows,
+            "hour_choices": _HOUR_CHOICES,
+            "int_fields": _AVAIL_INT_FIELDS,
+            "int_values": int_values,
+            "timezones": _TIMEZONES,
+            "current_tz": str(cfg.tz),
+            "booking_enabled": booking_enabled(db),
+            "gmail_connected": _gmail_connected(db),
+        },
+    )
+
+
+@router.post("/availability", response_class=HTMLResponse)
+async def cs_availability_save(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    form = await request.form()
+
+    # Per-day hours: keep only days that are checked AND have a valid open < close window.
+    day_hours: dict[str, list[int]] = {}
+    for n, _ in _WEEKDAYS:
+        if f"day_{n}_enabled" not in form:
+            continue
+        try:
+            open_h = int(str(form.get(f"day_{n}_open")))
+            close_h = int(str(form.get(f"day_{n}_close")))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= open_h < close_h <= 23:
+            day_hours[str(n)] = [open_h, close_h]
+    _set_setting(db, "cal_day_hours", json.dumps(day_hours))
+
+    # Global window integers, clamped to their documented ranges.
+    for key, _, _, lo, hi in _AVAIL_INT_FIELDS:
+        raw = str(form.get(key, "")).strip()
+        if not raw:
+            continue
+        try:
+            _set_setting(db, key, str(max(lo, min(hi, int(raw)))))
+        except ValueError:
+            logger.warning("Ignored non-int availability value %r=%r", key, raw)
+
+    # Timezone (only accept a value from our known list).
+    tz = str(form.get("cal_timezone", "")).strip()
+    if tz in {name for name, _ in _TIMEZONES}:
+        _set_setting(db, "cal_timezone", tz)
+
+    open_days = len(day_hours)
+    return HTMLResponse(
+        f'<span class="text-success"><i class="bi bi-check-circle me-1"></i>'
+        f"Saved — chatbot now offers times on <strong>{open_days}</strong> "
+        f"day{'s' if open_days != 1 else ''} per week.</span>"
     )

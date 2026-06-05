@@ -6,8 +6,6 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-
-logger = logging.getLogger(__name__)
 from sqlalchemy import func as sql_func
 from sqlalchemy.orm import Session
 
@@ -16,6 +14,8 @@ from app.models.agent import AgentJob
 from app.models.sales import OutreachLog, Prospect
 from app.services import agent, email_sender
 from app.views import templates
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -127,7 +127,7 @@ def leads_research(
     except Exception:
         db.rollback()
         logger.exception("Failed to create research job")
-        raise HTTPException(status_code=500, detail="Database error creating job")
+        raise HTTPException(status_code=500, detail="Database error creating job") from None
     background_tasks.add_task(agent.run_research_job, job.id)
     return RedirectResponse(url=f"/leads/jobs/{job.id}", status_code=303)
 

@@ -50,6 +50,39 @@
   </div>
 </div>
 
+<!-- Daily & weekly sales / returns -->
+<div class="card mb-3">
+  <div class="card-header py-2 small fw-semibold">
+    <i class="bi bi-calendar-week me-1"></i>Daily &amp; Weekly Sales &amp; Returns
+    <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip"
+       title="Sales = gross revenue. Returns = net profit after all costs. Averaged across the full year, so seasonality and the spread of fixed monthly costs are baked in."></i>
+  </div>
+  <div class="card-body py-2">
+    <div class="row g-2 text-center">
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Daily Sales</div>
+        <div class="fw-bold">${{ "%.0f" | format(summary.daily_sales) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Weekly Sales</div>
+        <div class="fw-bold">${{ "%.0f" | format(summary.weekly_sales) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Daily Returns</div>
+        <div class="fw-bold {% if summary.daily_net >= 0 %}text-success{% else %}text-danger{% endif %}">
+          ${{ "%.2f" | format(summary.daily_net) }}
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Weekly Returns</div>
+        <div class="fw-bold {% if summary.weekly_net >= 0 %}text-success{% else %}text-danger{% endif %}">
+          ${{ "%.0f" | format(summary.weekly_net) }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-3">
   <!-- Per-unit economics -->
   <div class="col-lg-5">
@@ -70,6 +103,21 @@
               <td class="text-muted">All-in cost / month</td>
               <td class="text-end">${{ "%.0f" | format(monthly_cost) }}</td>
             </tr>
+            {% if finance and finance.financed %}
+            <tr>
+              <td class="text-muted d-flex align-items-center gap-1">
+                Machine finance / month
+                <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip"
+                   title="{% if finance.manual %}Monthly machine finance payment entered directly. Counts as a monthly operating cost; the machine is treated as financed, so it's excluded from the upfront investment.{% else %}Amortized payment on the financed machine: ${{ '%.0f' | format(finance.principal) }} at {{ '%.1f' | format(finance.apr_pct) }}% APR over {{ finance.term_months | int }} months. Total interest ≈ ${{ '%.0f' | format(finance.total_interest) }}.{% endif %}"></i>
+              </td>
+              <td class="text-end">
+                ${{ "%.0f" | format(finance.monthly_payment) }}
+                <span class="text-muted">
+                  {%- if finance.manual %} entered{% else %} @ {{ "%.1f" | format(finance.apr_pct) }}% / {{ finance.term_months | int }}mo{% endif -%}
+                </span>
+              </td>
+            </tr>
+            {% endif %}
             <tr>
               <td class="text-muted">Net / month</td>
               <td class="text-end fw-semibold {% if summary.avg_monthly_net >= 0 %}text-success{% else %}text-danger{% endif %}">

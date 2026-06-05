@@ -119,6 +119,11 @@ def test_bulk_source_run_marks_flag_and_queues_count(
     # we patch at the module level it gets imported from.
     from app.routers import inventory as inv_router
 
+    # The bulk worker opens its own Session(engine) (it runs after the request,
+    # when the injected db is gone). Point that module-level engine at the test's
+    # in-memory database so the worker sees the products this test created.
+    monkeypatch.setattr(inv_router, "engine", db.get_bind())
+
     called: list[int] = []
 
     def _noop(job_id: int) -> None:

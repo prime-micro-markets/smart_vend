@@ -1,6 +1,7 @@
 """Gmail API integration for monitoring the company inbox and drafting AI replies.
 
-OAuth flow: Google OAuth 2.0 with gmail.readonly + gmail.send + calendar.freebusy scopes.
+OAuth flow: Google OAuth 2.0 with gmail.readonly + gmail.send + calendar.freebusy +
+calendar.events scopes.
 Tokens are stored in AppSetting (gmail_refresh_token, gmail_access_token, gmail_token_expiry).
 The existing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are reused.
 """
@@ -49,16 +50,18 @@ _INITIAL_LOOKBACK_SECONDS = 7 * 24 * 3600
 _OVERLAP_SECONDS = 3600
 _MAX_RESULTS = 50
 
-_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 — endpoint URL, not a secret
 _GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 _SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
-    # Read-only free/busy for the chatbot's live availability tool
-    # (app/services/google_calendar.py). Adding this scope means the stored refresh
-    # token must be re-minted: re-run /customer-service/gmail/connect once after
-    # deploy to re-consent.
+    # Read-only free/busy for the chatbot's live availability tool, plus events
+    # write so the chatbot can book confirmed consultations on the calendar
+    # (app/services/google_calendar.py). Adding/changing a scope means the stored
+    # refresh token must be re-minted: re-run /customer-service/gmail/connect once
+    # after deploy to re-consent.
     "https://www.googleapis.com/auth/calendar.freebusy",
+    "https://www.googleapis.com/auth/calendar.events",
 ]
 
 
@@ -116,12 +119,19 @@ def store_tokens(db: Session, token_data: dict) -> None:
     refresh = token_data.get("refresh_token", "")
     if refresh:
         _set(db, "gmail_refresh_token", refresh)
+    # Persist the scopes Google actually granted so the UI can tell whether calendar
+    # booking is enabled without making an API call. Google omits "scope" on a plain
+    # refresh when nothing changed, so only overwrite when it's actually present.
+    scope = token_data.get("scope", "")
+    if scope:
+        _set(db, "gmail_granted_scopes", scope)
     expires_in = int(token_data.get("expires_in", 3600))
     expiry = (datetime.now(tz=UTC) + timedelta(seconds=expires_in)).isoformat()
     _set(db, "gmail_token_expiry", expiry)
-    # A fresh consent clears any pending reauth banner.
+    # A fresh consent clears any pending reauth banner — Gmail and calendar both.
     _set(db, "gmail_reauth_required", "")
     _set(db, "gmail_reauth_at", "")
+    _set(db, "calendar_reauth_required", "")
     db.commit()
 
 
@@ -157,8 +167,9 @@ def get_valid_access_token(db: Session) -> str:
                 expiry = expiry.replace(tzinfo=UTC)
             if datetime.now(tz=UTC) < expiry - timedelta(minutes=5):
                 return access_token
-        except Exception:
-            pass
+        except Exception as exc:
+            # Unparseable/funny expiry — fall through and refresh the token.
+            _log.debug("Stored token expiry unusable (%s); refreshing.", exc)
 
     # Refresh the token
     with httpx.Client(timeout=15) as client:
@@ -189,6 +200,46 @@ def get_valid_access_token(db: Session) -> str:
 
     store_tokens(db, token_data)
     return token_data["access_token"]
+
+
+# ── Calendar-write scope helpers ───────────────────────────────────────────────
+
+_CALENDAR_WRITE_SCOPES = (
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar",
+)
+
+
+def has_calendar_write(db: Session) -> bool:
+    """True if the stored grant includes a scope that allows creating events.
+
+    Reads the persisted granted-scope string (no API call). Returns False when
+    Gmail was connected before the calendar.events scope was added, signalling a
+    one-time reconnect is needed to enable chatbot booking.
+    """
+    if not _get(db, "gmail_refresh_token"):
+        return False
+    granted = _get(db, "gmail_granted_scopes")
+    if not granted:
+        # Connected before we tracked scopes — can't confirm write access; treat as
+        # not-enabled so the UI prompts a reconnect rather than silently 403-ing.
+        return False
+    return any(scope in granted for scope in _CALENDAR_WRITE_SCOPES)
+
+
+def flag_calendar_reauth(db: Session, reason: str = "") -> None:
+    """Flag that calendar booking needs a reconnect, without touching Gmail tokens.
+
+    Used when an event write is rejected for insufficient scope. Email polling
+    keeps working on the existing grant; only the booking feature is paused until
+    an operator re-consents at /customer-service/gmail/connect.
+    """
+    _set(
+        db,
+        "calendar_reauth_required",
+        reason or "Reconnect Google to enable chatbot calendar booking.",
+    )
+    db.commit()
 
 
 # ── Gmail API calls ───────────────────────────────────────────────────────────
@@ -293,7 +344,8 @@ def poll_new_emails(db: Session) -> list[EmailApproval]:
 
         try:
             msg = _gmail_get(f"messages/{msg_id}", token, params={"format": "full"})
-        except Exception:
+        except Exception as exc:
+            _log.debug("Skipping message %s — fetch failed: %s", msg_id, exc)
             continue
 
         headers = msg.get("payload", {}).get("headers", [])

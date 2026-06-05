@@ -6,21 +6,28 @@ import json
 from typing import Any
 
 MONTHS = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
 
 DAYS_PER_MONTH = 30.4
+DAYS_PER_YEAR = 365.0
+WEEKS_PER_YEAR = 52.0
+
+
+def calc_loan_payment(principal: float, apr: float, term_months: float) -> float:
+    """Fixed monthly payment for an amortized loan (machine financing).
+
+    apr is an annual fraction (0.08 = 8% APR); the monthly rate is apr/12. With a
+    zero term or principal there's no payment; with a 0% APR it's straight-line
+    (principal / term). Returns 0.0 when nothing is financed.
+    """
+    if term_months <= 0 or principal <= 0:
+        return 0.0
+    monthly_rate = apr / 12
+    if monthly_rate <= 0:
+        return principal / term_months
+    return principal * monthly_rate / (1 - (1 + monthly_rate) ** -term_months)
 
 
 def build_12month_table(
@@ -34,8 +41,10 @@ def build_12month_table(
     other_opex_monthly: float = 0.0,
     connectivity_monthly: float = 0.0,
     software_monthly: float = 0.0,
+    recurring_restock_monthly: float = 0.0,
     processing_fee_pct: float = 0.0,
     processing_fee_per_txn: float = 0.0,
+    monthly_loan_payment: float = 0.0,
     seasonality_json: str | None = None,
 ) -> list[dict[str, Any]]:
     multipliers: list[float] = json.loads(seasonality_json) if seasonality_json else [1.0] * 12
@@ -43,13 +52,12 @@ def build_12month_table(
     base_monthly_txns = daily_transactions * DAYS_PER_MONTH
     base_monthly_revenue = base_monthly_txns * avg_ticket_usd
     # Fixed costs don't scale with volume; commission and processing do (handled per-month).
+    # A machine loan payment, when financed, is just another fixed monthly cost; so is a flat
+    # recurring restock/inventory budget.
     fixed_opex = (
-        restock_labor_monthly
-        + supplies_monthly
-        + insurance_monthly
-        + other_opex_monthly
-        + connectivity_monthly
-        + software_monthly
+        restock_labor_monthly + supplies_monthly + insurance_monthly
+        + other_opex_monthly + connectivity_monthly + software_monthly
+        + recurring_restock_monthly + monthly_loan_payment
     )
 
     rows = []
@@ -65,22 +73,20 @@ def build_12month_table(
         total_opex = fixed_opex + commission + processing
         net = gross_profit - total_opex
         cumulative += net
-        rows.append(
-            {
-                "month": MONTHS[i],
-                "multiplier": mult,
-                "transactions": transactions,
-                "revenue": revenue,
-                "cogs": cogs,
-                "gross_profit": gross_profit,
-                "cogs_pct": cogs_pct * 100,
-                "commission": commission,
-                "processing": processing,
-                "total_opex": total_opex,
-                "net": net,
-                "cumulative": cumulative,
-            }
-        )
+        rows.append({
+            "month": MONTHS[i],
+            "multiplier": mult,
+            "transactions": transactions,
+            "revenue": revenue,
+            "cogs": cogs,
+            "gross_profit": gross_profit,
+            "cogs_pct": cogs_pct * 100,
+            "commission": commission,
+            "processing": processing,
+            "total_opex": total_opex,
+            "net": net,
+            "cumulative": cumulative,
+        })
     return rows
 
 
@@ -89,10 +95,22 @@ def calc_summary(
     machine_cost: float,
     installation_cost: float = 0.0,
     initial_inventory_cost: float = 0.0,
+    financed: bool = False,
 ) -> dict[str, Any]:
-    total_investment = machine_cost + installation_cost + initial_inventory_cost
+    # When the machine is financed it isn't an upfront cash outlay — it's repaid via the
+    # monthly loan payment already folded into opex — so it drops out of the investment base.
+    upfront_machine_cost = 0.0 if financed else machine_cost
+    total_investment = upfront_machine_cost + installation_cost + initial_inventory_cost
     annual_net = sum(r["net"] for r in table)
+    annual_revenue = sum(r["revenue"] for r in table)
     avg_monthly_net = annual_net / 12 if table else 0.0
+
+    # Daily / weekly sales (gross revenue) and returns (net profit), averaged over
+    # the full year so they reflect seasonality and the spread of fixed monthly costs.
+    daily_sales = annual_revenue / DAYS_PER_YEAR
+    weekly_sales = annual_revenue / WEEKS_PER_YEAR
+    daily_net = annual_net / DAYS_PER_YEAR
+    weekly_net = annual_net / WEEKS_PER_YEAR
 
     # Payback: month when cumulative cash flow covers total investment
     payback_months: int | None = None
@@ -112,7 +130,12 @@ def calc_summary(
     return {
         "total_investment": total_investment,
         "annual_net": annual_net,
+        "annual_revenue": annual_revenue,
         "avg_monthly_net": avg_monthly_net,
+        "daily_sales": daily_sales,
+        "weekly_sales": weekly_sales,
+        "daily_net": daily_net,
+        "weekly_net": weekly_net,
         "steady_state_net": steady_state_net,
         "payback_months": payback_months,
         "gross_margin_pct": gross_margin_pct,
@@ -137,7 +160,9 @@ def calc_unit_economics(
     """
     variable_pct = cogs_pct + commission_pct + processing_fee_pct
     contribution_per_txn = avg_ticket_usd * (1 - variable_pct) - processing_fee_per_txn
-    contribution_margin_pct = contribution_per_txn / avg_ticket_usd * 100 if avg_ticket_usd else 0.0
+    contribution_margin_pct = (
+        contribution_per_txn / avg_ticket_usd * 100 if avg_ticket_usd else 0.0
+    )
 
     breakeven_txns_month: float | None = None
     breakeven_txns_day: float | None = None
@@ -198,16 +223,14 @@ def cost_breakdown(table: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if amount <= 0:
             continue
-        segments.append(
-            {
-                "key": key,
-                "label": label,
-                "css": css,
-                "amount": amount,
-                "pct_of_revenue": (amount / revenue * 100) if revenue else 0.0,
-                "width": amount / denom * 100,
-            }
-        )
+        segments.append({
+            "key": key,
+            "label": label,
+            "css": css,
+            "amount": amount,
+            "pct_of_revenue": (amount / revenue * 100) if revenue else 0.0,
+            "width": amount / denom * 100,
+        })
 
     return {
         "revenue": revenue,

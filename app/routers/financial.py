@@ -10,6 +10,7 @@ from app.models.equipment import EquipmentUnit
 from app.models.financial import MachineProForma
 from app.services.financial_calc import (
     build_12month_table,
+    calc_loan_payment,
     calc_summary,
     calc_unit_economics,
     cashflow_points,
@@ -23,6 +24,11 @@ router = APIRouter(prefix="/financial", tags=["financial"])
 def _pct_to_fraction(value: float) -> float:
     """Form fields take 0–100; the engine wants a fraction. >1 means a percent."""
     return value / 100 if value > 1 else value
+
+
+def _to_daily_transactions(count: float, basis: str) -> float:
+    """The engine works in daily transactions; weekly input is divided across 7 days."""
+    return count / 7.0 if basis == "weekly" else count
 
 
 def _equipment_options(db: Session) -> list[dict[str, Any]]:
@@ -66,14 +72,23 @@ def _build_projection(
     other_opex_monthly: float,
     connectivity_monthly: float,
     software_monthly: float,
+    recurring_restock_monthly: float,
     processing_fee_pct: float,
     processing_fee_per_txn: float,
     seasonality_json: str | None,
     machine_cost: float,
     installation_cost: float,
     initial_inventory_cost: float,
+    finance_apr: float = 0.0,
+    finance_term_months: float = 0.0,
+    finance_payment_monthly: float = 0.0,
 ) -> dict[str, Any]:
     """Build the full result context (table + every summary view) from fractional rates."""
+    # A directly-entered monthly payment wins; otherwise amortize machine_cost over the term.
+    computed_payment = calc_loan_payment(machine_cost, finance_apr, finance_term_months)
+    manual_payment = finance_payment_monthly > 0
+    monthly_loan_payment = finance_payment_monthly if manual_payment else computed_payment
+    financed = monthly_loan_payment > 0
     table = build_12month_table(
         daily_transactions=daily_transactions,
         avg_ticket_usd=avg_ticket_usd,
@@ -85,8 +100,10 @@ def _build_projection(
         other_opex_monthly=other_opex_monthly,
         connectivity_monthly=connectivity_monthly,
         software_monthly=software_monthly,
+        recurring_restock_monthly=recurring_restock_monthly,
         processing_fee_pct=processing_fee_pct,
         processing_fee_per_txn=processing_fee_per_txn,
+        monthly_loan_payment=monthly_loan_payment,
         seasonality_json=seasonality_json,
     )
     summary = calc_summary(
@@ -94,14 +111,12 @@ def _build_projection(
         machine_cost=machine_cost,
         installation_cost=installation_cost,
         initial_inventory_cost=initial_inventory_cost,
+        financed=financed,
     )
     fixed_monthly_opex = (
-        restock_labor_monthly
-        + supplies_monthly
-        + insurance_monthly
-        + other_opex_monthly
-        + connectivity_monthly
-        + software_monthly
+        restock_labor_monthly + supplies_monthly + insurance_monthly
+        + other_opex_monthly + connectivity_monthly + software_monthly
+        + recurring_restock_monthly + monthly_loan_payment
     )
     unit_econ = calc_unit_economics(
         avg_ticket_usd=avg_ticket_usd,
@@ -111,10 +126,21 @@ def _build_projection(
         processing_fee_per_txn=processing_fee_per_txn,
         fixed_monthly_opex=fixed_monthly_opex,
     )
+    finance = {
+        "financed": financed,
+        "monthly_payment": monthly_loan_payment,
+        "manual": manual_payment,
+        "apr_pct": finance_apr * 100,
+        "term_months": finance_term_months,
+        "principal": machine_cost,
+        "total_paid": monthly_loan_payment * finance_term_months,
+        "total_interest": max(monthly_loan_payment * finance_term_months - machine_cost, 0.0),
+    }
     return {
         "table": table,
         "summary": summary,
         "unit_econ": unit_econ,
+        "finance": finance,
         "breakdown": cost_breakdown(table),
         "cashflow": cashflow_points(table, summary["total_investment"]),
     }
@@ -133,12 +159,16 @@ def _projection_for_scenario(s: MachineProForma) -> dict[str, Any]:
         other_opex_monthly=s.other_opex_monthly,
         connectivity_monthly=s.connectivity_monthly,
         software_monthly=s.software_monthly,
+        recurring_restock_monthly=s.recurring_restock_monthly,
         processing_fee_pct=s.processing_fee_pct,
         processing_fee_per_txn=s.processing_fee_per_txn,
         seasonality_json=s.seasonality_json,
         machine_cost=s.machine_cost,
         installation_cost=s.installation_cost,
         initial_inventory_cost=s.initial_inventory_cost,
+        finance_apr=s.finance_apr_pct,
+        finance_term_months=s.finance_term_months,
+        finance_payment_monthly=s.finance_payment_monthly,
     )
 
 
@@ -185,6 +215,7 @@ def financial_calculate(
     installation_cost: float = 0,
     initial_inventory_cost: float = 0,
     daily_transactions: float = 0,
+    transaction_basis: str = "daily",
     avg_ticket_usd: float = 0,
     cogs_pct: float = 0,
     commission_pct: float = 0,
@@ -194,14 +225,18 @@ def financial_calculate(
     other_opex_monthly: float = 0,
     connectivity_monthly: float = 0,
     software_monthly: float = 0,
+    recurring_restock_monthly: float = 0,
     processing_fee_pct: float = 0,
     processing_fee_per_txn: float = 0,
+    finance_apr_pct: float = 0,
+    finance_term_months: float = 0,
+    finance_payment_monthly: float = 0,
 ) -> HTMLResponse:
     season = [float(request.query_params.get(f"season_{i}", 1.0)) for i in range(12)]
     seasonality_json = json.dumps(season) if any(s != 1.0 for s in season) else None
 
     ctx = _build_projection(
-        daily_transactions=daily_transactions,
+        daily_transactions=_to_daily_transactions(daily_transactions, transaction_basis),
         avg_ticket_usd=avg_ticket_usd,
         cogs_pct=_pct_to_fraction(cogs_pct),
         commission_pct=_pct_to_fraction(commission_pct),
@@ -211,12 +246,16 @@ def financial_calculate(
         other_opex_monthly=other_opex_monthly,
         connectivity_monthly=connectivity_monthly,
         software_monthly=software_monthly,
+        recurring_restock_monthly=recurring_restock_monthly,
         processing_fee_pct=_pct_to_fraction(processing_fee_pct),
         processing_fee_per_txn=processing_fee_per_txn,
         seasonality_json=seasonality_json,
         machine_cost=machine_cost,
         installation_cost=installation_cost,
         initial_inventory_cost=initial_inventory_cost,
+        finance_apr=_pct_to_fraction(finance_apr_pct),
+        finance_term_months=finance_term_months,
+        finance_payment_monthly=finance_payment_monthly,
     )
     return templates.TemplateResponse(request, "financial/_proforma_result.html", ctx)
 
@@ -229,6 +268,7 @@ def financial_save(
     installation_cost: float = Form(0),
     initial_inventory_cost: float = Form(0),
     daily_transactions: float = Form(...),
+    transaction_basis: str = Form("daily"),
     avg_ticket_usd: float = Form(...),
     cogs_pct: float = Form(...),
     commission_pct: float = Form(0),
@@ -238,8 +278,12 @@ def financial_save(
     other_opex_monthly: float = Form(0),
     connectivity_monthly: float = Form(0),
     software_monthly: float = Form(0),
+    recurring_restock_monthly: float = Form(0),
     processing_fee_pct: float = Form(0),
     processing_fee_per_txn: float = Form(0),
+    finance_apr_pct: float = Form(0),
+    finance_term_months: float = Form(0),
+    finance_payment_monthly: float = Form(0),
     equipment_unit_id: int | None = Form(None),
     seasonality_json: str = Form(""),
     notes: str = Form(""),
@@ -256,7 +300,8 @@ def financial_save(
         machine_cost=machine_cost,
         installation_cost=installation_cost,
         initial_inventory_cost=initial_inventory_cost,
-        daily_transactions=daily_transactions,
+        daily_transactions=_to_daily_transactions(daily_transactions, transaction_basis),
+        transaction_basis=transaction_basis,
         avg_ticket_usd=avg_ticket_usd,
         cogs_pct=_pct_to_fraction(cogs_pct),
         commission_pct=_pct_to_fraction(commission_pct),
@@ -266,8 +311,12 @@ def financial_save(
         other_opex_monthly=other_opex_monthly,
         connectivity_monthly=connectivity_monthly,
         software_monthly=software_monthly,
+        recurring_restock_monthly=recurring_restock_monthly,
         processing_fee_pct=_pct_to_fraction(processing_fee_pct),
         processing_fee_per_txn=processing_fee_per_txn,
+        finance_apr_pct=_pct_to_fraction(finance_apr_pct),
+        finance_term_months=finance_term_months,
+        finance_payment_monthly=finance_payment_monthly,
         equipment_unit_id=equipment_unit_id or None,
         seasonality_json=stored_season,
         notes=notes or None,
@@ -317,6 +366,7 @@ def financial_copy(scenario_id: int, db: Session = Depends(get_db)) -> HTMLRespo
         installation_cost=original.installation_cost,
         initial_inventory_cost=original.initial_inventory_cost,
         daily_transactions=original.daily_transactions,
+        transaction_basis=original.transaction_basis,
         avg_ticket_usd=original.avg_ticket_usd,
         cogs_pct=original.cogs_pct,
         commission_pct=original.commission_pct,
@@ -326,8 +376,12 @@ def financial_copy(scenario_id: int, db: Session = Depends(get_db)) -> HTMLRespo
         other_opex_monthly=original.other_opex_monthly,
         connectivity_monthly=original.connectivity_monthly,
         software_monthly=original.software_monthly,
+        recurring_restock_monthly=original.recurring_restock_monthly,
         processing_fee_pct=original.processing_fee_pct,
         processing_fee_per_txn=original.processing_fee_per_txn,
+        finance_apr_pct=original.finance_apr_pct,
+        finance_term_months=original.finance_term_months,
+        finance_payment_monthly=original.finance_payment_monthly,
         equipment_unit_id=original.equipment_unit_id,
         seasonality_json=original.seasonality_json,
         notes=original.notes,

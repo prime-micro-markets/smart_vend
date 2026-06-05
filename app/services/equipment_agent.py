@@ -22,16 +22,16 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
-
-_SSL_VERIFY = False  # Windows Python can't verify Shopify's intermediate CA via certifi
-
 from app.config import settings
 from app.database import engine
 from app.models.agent import AgentJob
 from app.models.equipment import EquipmentUnit
 from app.services import app_settings, firecrawl_client, vendguys_scraper
 from app.services.vendguys_scraper import VGProduct, fetch_cantaloupe_catalog
+
+logger = logging.getLogger(__name__)
+
+_SSL_VERIFY = False  # Windows Python can't verify Shopify's intermediate CA via certifi
 
 # ── image storage ────────────────────────────────────────────────────────────
 _EQUIPMENT_IMG_DIR = Path(__file__).parent.parent / "static" / "images" / "equipment"
@@ -107,7 +107,7 @@ def _match_vendguys(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduct 
     model_numbers = re.findall(r"\d{3,}", unit_text)
 
     # Keep noise minimal: only articles/prepositions that carry zero discriminating value
-    _NOISE = {
+    _noise = {
         "the",
         "a",
         "and",
@@ -128,7 +128,6 @@ def _match_vendguys(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduct 
 
     for vg in catalog:
         vg_text = re.sub(r"[^a-z0-9\s]", "", vg.title.lower())
-        vg_handle = vg.handle.replace("-", " ").replace("%e2%84%a2", "")
         vg_tokens = set(vg_text.split())
         score = 0
 
@@ -138,7 +137,7 @@ def _match_vendguys(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduct 
                 score += 10
 
         # Token overlap (excluding noise)
-        score += len((unit_tokens & vg_tokens) - _NOISE)
+        score += len((unit_tokens & vg_tokens) - _noise)
 
         # Manufacturer prefix bonus
         mfr = (unit.manufacturer or "").lower().split()[0]
@@ -162,7 +161,7 @@ def _match_cantaloupe(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduc
     unit_tokens = set(unit_text.split())
     model_numbers = re.findall(r"\d{3,}", unit_text)
 
-    _NOISE = {"the", "a", "and", "or", "with", "for", "of", "in", "by", "single", "one"}
+    _noise = {"the", "a", "and", "or", "with", "for", "of", "in", "by", "single", "one"}
 
     best: VGProduct | None = None
     best_score = 0
@@ -178,7 +177,7 @@ def _match_cantaloupe(unit: EquipmentUnit, catalog: list[VGProduct]) -> VGProduc
             if num in vg.handle or num in vg_text:
                 score += 10
 
-        score += len((unit_tokens & vg_tokens) - _NOISE)
+        score += len((unit_tokens & vg_tokens) - _noise)
 
         # Penalise the free "Cantaloupe One" bundles — prefer paid listings for spec data
         if vg.price == 0.0:
@@ -200,7 +199,8 @@ def _build_context(
     cantaloupe_catalog: list[VGProduct],
     log_entries: list[dict],
 ) -> dict[str, Any]:
-    """Return a dict with keys: unit, content, source_image_url, vendguys_page_url, cantaloupe_page_url."""
+    """Return a dict with keys: unit, content, source_image_url, vendguys_page_url,
+    cantaloupe_page_url."""
     # 1. Try VendGuys catalog match
     vg = _match_vendguys(unit, catalog)
     if vg:
@@ -416,7 +416,8 @@ def run_equipment_refresh_job(job_id: int) -> None:
                             records.append(rec)
                         if not rec.get("image_url") and ctx["source_image_url"]:
                             rec["image_url"] = ctx["source_image_url"]
-                        # Catalog scoring is authoritative — always trust it over Claude's extraction
+                        # Catalog scoring is authoritative — always trust it over
+                        # Claude's extraction
                         if ctx.get("vendguys_page_url"):
                             rec["product_url"] = ctx["vendguys_page_url"]
                         elif ctx.get("cantaloupe_page_url"):
@@ -520,13 +521,13 @@ def _download_image(url: str, unit_id: int) -> str | None:
                 return None
             if len(resp.content) > _IMG_MAX_BYTES:
                 return None
-            _CT_EXT = {
+            _ct_ext = {
                 "image/jpeg": ".jpg",
                 "image/png": ".png",
                 "image/webp": ".webp",
                 "image/gif": ".gif",
             }
-            ext = _CT_EXT.get(ct)
+            ext = _ct_ext.get(ct)
             if not ext:
                 suffix = Path(url.split("?")[0]).suffix.lower()
                 ext = suffix if suffix in _ALLOWED_IMG_SUFFIXES else ".jpg"

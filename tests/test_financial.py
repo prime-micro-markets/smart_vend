@@ -5,6 +5,7 @@ from app.models.equipment import EquipmentUnit
 from app.models.financial import MachineProForma
 from app.services.financial_calc import (
     build_12month_table,
+    calc_loan_payment,
     calc_summary,
     calc_unit_economics,
     cashflow_points,
@@ -78,6 +79,77 @@ def test_processing_fees_reduce_net() -> None:
     expected_processing = revenue * 0.0595 + txns * 0.05
     assert abs(with_fees[0]["processing"] - expected_processing) < 0.01
     assert abs((plain[0]["net"] - with_fees[0]["net"]) - expected_processing) < 0.01
+
+
+def test_calc_summary_daily_weekly_sales_returns() -> None:
+    rows = build_12month_table(daily_transactions=20, avg_ticket_usd=4.0, cogs_pct=0.40)
+    summary = calc_summary(rows, machine_cost=5000.0)
+    annual_revenue = sum(r["revenue"] for r in rows)
+    assert abs(summary["annual_revenue"] - annual_revenue) < 0.01
+    assert abs(summary["daily_sales"] - annual_revenue / 365.0) < 0.01
+    assert abs(summary["weekly_sales"] - annual_revenue / 52.0) < 0.01
+    assert abs(summary["daily_net"] - summary["annual_net"] / 365.0) < 0.01
+    assert abs(summary["weekly_net"] - summary["annual_net"] / 52.0) < 0.01
+
+
+def test_calc_loan_payment_amortized() -> None:
+    # $10,000 at 8% APR over 60 months → standard amortized payment ≈ $202.76.
+    pmt = calc_loan_payment(principal=10_000.0, apr=0.08, term_months=60)
+    assert abs(pmt - 202.76) < 0.5
+    # Total paid exceeds principal (interest), and the formula is reversible.
+    assert pmt * 60 > 10_000.0
+
+
+def test_calc_loan_payment_zero_apr_is_straight_line() -> None:
+    assert abs(calc_loan_payment(12_000.0, 0.0, 24) - 500.0) < 0.001
+
+
+def test_calc_loan_payment_no_financing() -> None:
+    # No term or no principal → no payment.
+    assert calc_loan_payment(10_000.0, 0.08, 0) == 0.0
+    assert calc_loan_payment(0.0, 0.08, 60) == 0.0
+
+
+def test_financing_adds_monthly_cost_and_drops_upfront_machine() -> None:
+    base = {"daily_transactions": 25, "avg_ticket_usd": 4.0, "cogs_pct": 0.40}
+    cash = build_12month_table(**base)
+    pmt = calc_loan_payment(8000.0, 0.10, 48)
+    financed = build_12month_table(**base, monthly_loan_payment=pmt)
+    # The loan payment is a fixed monthly cost: net drops by exactly the payment.
+    assert abs((cash[0]["net"] - financed[0]["net"]) - pmt) < 0.01
+
+    # Financed → machine cost leaves the upfront investment base.
+    cash_sum = calc_summary(cash, machine_cost=8000.0, installation_cost=500.0)
+    fin_sum = calc_summary(financed, machine_cost=8000.0, installation_cost=500.0, financed=True)
+    assert cash_sum["total_investment"] == 8500.0
+    assert fin_sum["total_investment"] == 500.0
+
+
+def test_recurring_restock_is_fixed_monthly_cost() -> None:
+    base = {"daily_transactions": 25, "avg_ticket_usd": 4.0, "cogs_pct": 0.40}
+    plain = build_12month_table(**base)
+    with_restock = build_12month_table(**base, recurring_restock_monthly=150.0)
+    # A flat recurring restock budget drops each month's net by exactly that amount.
+    assert abs((plain[0]["net"] - with_restock[0]["net"]) - 150.0) < 0.01
+
+
+def test_financial_save_with_recurring_restock(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Recurring Restock",
+            "machine_cost": "8000",
+            "daily_transactions": "25",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+            "recurring_restock_monthly": "150",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Recurring Restock").first()
+    assert s is not None
+    assert s.recurring_restock_monthly == 150.0
 
 
 def test_calc_unit_economics_breakeven() -> None:
@@ -272,6 +344,121 @@ def test_financial_calculate_with_processing(client: TestClient) -> None:
     assert "Processing" in resp.text
     assert "Contribution" in resp.text
     assert "Break-even" in resp.text
+    # Daily/weekly sales & returns card renders in the projection.
+    assert "Daily Sales" in resp.text
+    assert "Weekly Returns" in resp.text
+
+
+def test_financial_save_with_manual_finance_payment(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Leased Cooler",
+            "machine_cost": "8000",
+            "daily_transactions": "25",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+            "finance_payment_monthly": "175",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Leased Cooler").first()
+    assert s is not None
+    assert s.finance_payment_monthly == 175.0
+
+
+def test_manual_finance_payment_overrides_amortization(client: TestClient) -> None:
+    # With both a manual payment and APR/term, the entered payment is what's used.
+    resp = client.get(
+        "/financial/calculate",
+        params={
+            "machine_cost": 8000,
+            "daily_transactions": 25,
+            "avg_ticket_usd": 4.0,
+            "cogs_pct": 40,
+            "finance_apr_pct": 9,
+            "finance_term_months": 48,
+            "finance_payment_monthly": 250,
+        },
+    )
+    assert resp.status_code == 200
+    assert "Machine finance / month" in resp.text
+    assert "$250" in resp.text
+
+
+def test_save_weekly_transactions_stored_as_daily(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Weekly Entry",
+            "machine_cost": "8000",
+            "daily_transactions": "140",  # entered as weekly
+            "transaction_basis": "weekly",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Weekly Entry").first()
+    assert s is not None
+    assert s.transaction_basis == "weekly"
+    # 140/week → 20/day canonical.
+    assert abs(s.daily_transactions - 20.0) < 0.001
+
+
+def test_calculate_weekly_matches_equivalent_daily(client: TestClient) -> None:
+    common = {"machine_cost": 8000, "avg_ticket_usd": 4.0, "cogs_pct": 40}
+    daily = client.get(
+        "/financial/calculate",
+        params={**common, "daily_transactions": 20, "transaction_basis": "daily"},
+    )
+    weekly = client.get(
+        "/financial/calculate",
+        params={**common, "daily_transactions": 140, "transaction_basis": "weekly"},
+    )
+    assert daily.status_code == weekly.status_code == 200
+    # 140/week and 20/day project identically (same revenue figure in the markup).
+    assert daily.text == weekly.text
+
+
+def test_financial_calculate_with_financing(client: TestClient) -> None:
+    resp = client.get(
+        "/financial/calculate",
+        params={
+            "machine_cost": 8000,
+            "daily_transactions": 25,
+            "avg_ticket_usd": 4.0,
+            "cogs_pct": 40,
+            "finance_apr_pct": 9,
+            "finance_term_months": 48,
+        },
+    )
+    assert resp.status_code == 200
+    assert "Machine finance / month" in resp.text
+
+
+def test_financial_save_with_financing(client: TestClient, db: Session) -> None:
+    resp = client.post(
+        "/financial/calculator",
+        data={
+            "name": "Financed Cooler",
+            "machine_cost": "8000",
+            "daily_transactions": "25",
+            "avg_ticket_usd": "4.00",
+            "cogs_pct": "40",
+            "finance_apr_pct": "9.5",
+            "finance_term_months": "48",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    s = db.query(MachineProForma).filter(MachineProForma.name == "Financed Cooler").first()
+    assert s is not None
+    # APR stored as a fraction; term stored verbatim.
+    assert abs(s.finance_apr_pct - 0.095) < 0.0001
+    assert s.finance_term_months == 48
 
 
 def test_calculator_lists_equipment_options(client: TestClient, db: Session) -> None:

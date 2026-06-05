@@ -12,10 +12,16 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.chat import ChatMessage
 from app.models.cs_governance import CSGovernanceRule
+from app.models.equipment import EquipmentUnit
 from app.models.settings import AppSetting
+from app.services import email_sender
 from app.services import google_calendar as gcal_svc
 
 _log = logging.getLogger(__name__)
+
+# tool_name marker for the per-session appointment record (a role="tool" ChatMessage)
+# the send_appointment_email tool reads to build a confirmation from the real booking.
+_BOOKING_RECORD_TOOL = "appointment_booked"
 
 _MAX_TOOL_CALLS = 5
 _MAX_HISTORY = 10
@@ -36,6 +42,23 @@ _CATEGORY_LABELS = {
     "knowledge": "Company Knowledge",
     "custom": "Additional Rules",
 }
+
+# Human-readable labels for equipment_type, mirrored from app/routers/equipment.py
+# so the chatbot describes machines the same way the catalog does.
+_EQUIPMENT_TYPE_LABELS = {
+    "smart_cooler": "AI Smart Cooler",
+    "freezer": "Smart Freezer",
+    "combo": "Combo Machine",
+    "drink": "Drink Machine",
+    "snack": "Snack Machine",
+    "glass_cooler": "Glass-Door Cooler",
+    "kiosk": "Micro Market Kiosk",
+    "micro_market": "Micro Market",
+}
+
+# Cap how many units we describe in the prompt so the context stays small and the
+# public (Groq free-tier) model stays fast. The catalog is small; this is a guard.
+_MAX_EQUIPMENT_FOR_PROMPT = 30
 
 # ── Provider / model defaults ────────────────────────────────────────────────
 
@@ -66,6 +89,84 @@ def get_active_provider(db: Session) -> tuple[str, str]:
     return provider, model
 
 
+# ── Equipment knowledge ──────────────────────────────────────────────────────
+
+
+def _format_unit_line(unit: EquipmentUnit) -> str:
+    """One compact bullet describing a unit's customer-relevant specs.
+
+    Only includes fields that are populated so the chatbot never invents specs or
+    parrots empty placeholders. Capacity is the field most asked about ("how many
+    drinks fit?"), so it leads.
+    """
+    name_bits = [unit.manufacturer, unit.product_name]
+    name = " ".join(b for b in name_bits if b).strip() or unit.product_name
+    type_label = _EQUIPMENT_TYPE_LABELS.get(
+        unit.equipment_type, unit.equipment_type.replace("_", " ").title()
+    )
+
+    specs: list[str] = []
+    if unit.capacity_units:
+        specs.append(f"holds ~{unit.capacity_units} items/products")
+    if unit.capacity_cu_ft:
+        specs.append(f"{unit.capacity_cu_ft:g} cu ft capacity")
+    if unit.height_in and unit.width_in and unit.depth_in:
+        specs.append(f'{unit.height_in:g}"H x {unit.width_in:g}"W x {unit.depth_in:g}"D')
+    if unit.weight_lbs:
+        specs.append(f"{unit.weight_lbs:g} lbs")
+    if unit.payment_types:
+        specs.append(f"payments: {unit.payment_types}")
+    if unit.ai_features:
+        acc = f" (~{unit.ai_accuracy_pct:g}% accuracy)" if unit.ai_accuracy_pct else ""
+        specs.append(f"AI grab-and-go checkout{acc}")
+    if unit.connectivity:
+        specs.append(f"connectivity: {unit.connectivity}")
+
+    # Deliberately no pricing. Equipment is installed at no cost to the host
+    # business; the specific model is chosen during the on-site evaluation, so the
+    # chatbot must never quote prices or imply the partner pays for a machine.
+
+    detail = "; ".join(specs) if specs else "specs available on request"
+    return f"- {name} ({type_label}): {detail}"
+
+
+def build_equipment_knowledge(db: Session) -> str:
+    """Render the active equipment catalog as a prompt section.
+
+    The chatbot previously had no awareness of the catalog, so questions like
+    "how many drinks can a machine hold?" went unanswered. This feeds the live
+    catalog (active units only, archived excluded) into the system prompt.
+    """
+    units = (
+        db.query(EquipmentUnit)
+        .filter(EquipmentUnit.status == "active")
+        .order_by(EquipmentUnit.equipment_type, EquipmentUnit.manufacturer)
+        .limit(_MAX_EQUIPMENT_FOR_PROMPT)
+        .all()
+    )
+    if not units:
+        return ""
+
+    lines = [_format_unit_line(u) for u in units]
+    return (
+        "EQUIPMENT CATALOG (use these real specs to answer questions about machine "
+        "capacity, size, features, and connectivity — do not invent numbers; if a "
+        "detail isn't listed, say you'll have a team member confirm):\n"
+        + "\n".join(lines)
+        + "\n\nEQUIPMENT COST & MODEL SELECTION (always follow this):\n"
+        "  - The equipment we install comes at NO COST to the host business — the "
+        "partner never buys or leases a machine.\n"
+        "  - NEVER quote prices, dollar figures, or cost ranges for any unit, even if "
+        "asked directly. We do not sell equipment to the partner.\n"
+        "  - The specific equipment model is determined when our team comes out for an "
+        "on-site evaluation of the location.\n"
+        "  - When a customer asks about cost, pricing, or which machine they'd get, "
+        "respond along these lines: the equipment is installed at no cost to the "
+        "business, and the exact model is chosen during a free on-site evaluation. "
+        'Then offer to schedule it, e.g. "Would you like to set up an appointment?"'
+    )
+
+
 # ── System prompt ────────────────────────────────────────────────────────────
 
 
@@ -77,12 +178,14 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
         .all()
     )
 
+    today = datetime.now(tz=gcal_svc.load_scheduling_config(db).tz)
     base = (
         f"You are a helpful customer service assistant for Prime Micro Markets, "
         f"a veteran-owned smart cooler vending company serving "
         f"Bay County, FL (Panama City area).\n\n"
         f"{settings.company_blurb}\n\n"
         f"You help answer questions from potential and existing host location partners.\n\n"
+        f"Today's date is {today.strftime('%A, %B')} {today.day}, {today.year}.\n\n"
     )
 
     if rules:
@@ -98,11 +201,44 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
 
         base += "RULES YOU MUST FOLLOW:\n" + "\n\n".join(rule_sections) + "\n\n"
 
+    equipment_knowledge = build_equipment_knowledge(db)
+    if equipment_knowledge:
+        base += equipment_knowledge + "\n\n"
+
     if include_tools:
         scheduling_note = (
-            "When asked about scheduling or booking a meeting, use the check_availability "
-            "tool to fetch real-time open consultation slots from the company calendar, "
-            "then share them with the customer."
+            "SCHEDULING A CONSULTATION — follow these steps in order:\n"
+            "  1. FIRST ask the customer their preference: which day works best, and do they "
+            "prefer morning or afternoon? Ask before listing any times.\n"
+            "  2. Call check_availability with their stated 'day' and/or 'period' to fetch "
+            "matching open slots, and show them as a short bulleted list. These are EXAMPLES to "
+            "help them choose — they are NOT the only options. The customer may pick any time "
+            "during our business hours, including a time you didn't list. If they have no "
+            "preference, call it with no filters. Help them narrow to one specific time.\n"
+            "  3. Once they name a time, collect the details needed to book: their full name, "
+            "phone number, and the location address for the proposed unit (email is optional but "
+            "lets us send a calendar invite). Ask for anything still missing.\n"
+            "  4. Read the chosen time and their details back to confirm, then call "
+            "book_appointment with the date and the EXACT time the customer asked for, plus name, "
+            "phone, and location. Only call book_appointment after they've confirmed.\n"
+            "  CRITICAL: If the customer asks for a time you did not list (e.g. you showed 12:30 "
+            "and they say '2pm'), do NOT tell them it's unavailable and do NOT just re-list your "
+            "slots. Take their details and call book_appointment with the time they requested. "
+            "Only book_appointment knows real availability — it checks the live calendar and will "
+            "tell you if that exact time is genuinely taken. Never refuse a requested time "
+            "yourself.\n"
+            "  5. After a booking succeeds, ask the visitor if they'd like an email confirming the "
+            "appointment. If yes, ask for their email address — we usually do NOT have one yet, so "
+            "never say you'll send it to an address 'on file' unless they gave one while booking. "
+            "When they provide the address, the confirmation is sent automatically — just "
+            "acknowledge it and wrap up. Do NOT call book_appointment or check_availability "
+            "again.\n"
+            "  IMPORTANT: Once an appointment has been booked in this conversation, do not start "
+            "scheduling again or offer new times unless the visitor explicitly asks to change it "
+            "or book another. Collecting their email is NOT a request for a new appointment.\n"
+            "  Never fabricate openings when proactively suggesting times, and never claim a "
+            "booking is made unless book_appointment succeeded. When the customer proposes their "
+            "own time, let book_appointment decide whether it's available rather than refusing it."
         )
     elif settings.google_booking_url:
         scheduling_note = (
@@ -115,15 +251,15 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
 
     if include_tools:
         escalation_note = (
-            "When a question or situation is beyond your ability to resolve — such as legal matters, "
-            "contract disputes, or situations requiring human judgement — use the "
+            "When a question or situation is beyond your ability to resolve — such as legal "
+            "matters, contract disputes, or situations requiring human judgement — use the "
             "request_human_followup tool."
         )
     else:
         escalation_note = (
-            "When a question or situation is beyond your ability to resolve — such as legal matters, "
-            "contract disputes, or situations requiring human judgement — ask the customer to email "
-            "us at primemicromarkets@gmail.com and a team member will follow up."
+            "When a question or situation is beyond your ability to resolve — such as legal "
+            "matters, contract disputes, or situations requiring human judgement — ask the "
+            "customer to email us at primemicromarkets@gmail.com and a team member will follow up."
         )
 
     lead_capture_note = (
@@ -153,19 +289,62 @@ def build_chatbot_system_prompt(db: Session, include_tools: bool = True) -> str:
 _TOOL_AVAILABILITY = {
     "name": "check_availability",
     "description": (
-        "Check the company calendar and return the next open consultation time slots. "
-        "Use this when a customer asks about scheduling a call, demo, or site visit, "
-        "or asks what times are available."
+        "Check the company calendar and return open consultation time slots. Use this to "
+        "narrow down a time AFTER asking the customer their preference. Pass the customer's "
+        "stated preference as filters so the options match what they asked for."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "reason": {
+            "day": {
                 "type": "string",
-                "description": "Brief reason the customer wants to schedule (optional)",
-            }
+                "description": (
+                    "Optional day-of-week preference, e.g. 'Monday' or 'Saturday'. "
+                    "Omit if the customer has no day preference."
+                ),
+            },
+            "period": {
+                "type": "string",
+                "enum": ["morning", "afternoon"],
+                "description": "Optional time-of-day preference. Omit if no preference.",
+            },
         },
         "required": [],
+    },
+}
+
+_TOOL_BOOK = {
+    "name": "book_appointment",
+    "description": (
+        "Book a CONFIRMED consultation on the company calendar. Call this ONLY after: "
+        "(1) the customer picked a specific time you offered via check_availability, AND "
+        "(2) they gave their full name, phone number, and the location address for the "
+        "proposed unit. Pass the chosen slot's date and time exactly as you showed it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "date": {
+                "type": "string",
+                "description": "The chosen slot's date as shown, e.g. 'June 6' or '2026-06-06'.",
+            },
+            "time": {
+                "type": "string",
+                "description": "The chosen slot's start time as shown, e.g. '10:00 AM'.",
+            },
+            "name": {"type": "string", "description": "Customer's full name"},
+            "phone": {"type": "string", "description": "Customer's phone number"},
+            "location": {
+                "type": "string",
+                "description": "Address of the location for the proposed unit",
+            },
+            "email": {
+                "type": "string",
+                "description": "Customer's email (optional — used to send a calendar invite)",
+            },
+            "notes": {"type": "string", "description": "Anything else relevant (optional)"},
+        },
+        "required": ["date", "time", "name", "phone", "location"],
     },
 }
 
@@ -208,6 +387,47 @@ _TOOL_ESCALATE_OAI = {
         "name": "request_human_followup",
         "description": _TOOL_ESCALATE["description"],
         "parameters": _TOOL_ESCALATE["input_schema"],
+    },
+}
+
+_TOOL_BOOK_OAI = {
+    "type": "function",
+    "function": {
+        "name": "book_appointment",
+        "description": _TOOL_BOOK["description"],
+        "parameters": _TOOL_BOOK["input_schema"],
+    },
+}
+
+_TOOL_SEND_EMAIL = {
+    "name": "send_appointment_email",
+    "description": (
+        "Email the visitor a written confirmation of the consultation just booked via "
+        "book_appointment. Call this ONLY after a successful booking and after the visitor "
+        "says yes to receiving an email. If their email wasn't collected during booking, ask "
+        "for it and pass it as 'email'."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "email": {
+                "type": "string",
+                "description": (
+                    "Recipient email. Optional if it was already given during booking; "
+                    "required if not."
+                ),
+            },
+        },
+        "required": [],
+    },
+}
+
+_TOOL_SEND_EMAIL_OAI = {
+    "type": "function",
+    "function": {
+        "name": "send_appointment_email",
+        "description": _TOOL_SEND_EMAIL["description"],
+        "parameters": _TOOL_SEND_EMAIL["input_schema"],
     },
 }
 
@@ -294,14 +514,508 @@ def _handle_capture_lead(tool_input: dict, session_id: str, db: Session) -> str:
     )
 
 
+_WEEKDAY_NAMES = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+_MONTH_NAMES = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+_TIME_RE = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?", re.IGNORECASE)
+
+
+def _parse_weekday(text: str) -> int | None:
+    text = (text or "").lower()
+    for name, n in _WEEKDAY_NAMES.items():
+        if name in text:
+            return n
+    return None
+
+
+def _parse_period(text: str) -> str | None:
+    text = (text or "").strip().lower()
+    return text if text in ("morning", "afternoon") else None
+
+
+def _parse_clock(text: str) -> tuple[int, int] | None:
+    """'10:00 AM' / '2pm' / '14:00' -> (hour, minute) in 24h, or None."""
+    m = _TIME_RE.search(text or "")
+    if not m:
+        return None
+    hour = int(m.group(1))
+    minute = int(m.group(2) or 0)
+    ampm = (m.group(3) or "").replace(".", "").lower()
+    if ampm == "pm" and hour != 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
+def _parse_month_day(text: str) -> tuple[int, int] | None:
+    """'June 6' / '6 June' / '2026-06-06' / '6/6' -> (month, day), or None."""
+    text = (text or "").strip().lower()
+    iso = re.search(r"\b\d{4}-(\d{1,2})-(\d{1,2})\b", text)
+    if iso:
+        return int(iso.group(1)), int(iso.group(2))
+    slash = re.search(r"\b(\d{1,2})/(\d{1,2})\b", text)
+    if slash:
+        return int(slash.group(1)), int(slash.group(2))
+    for name, mon in _MONTH_NAMES.items():
+        if name in text:
+            day_m = re.search(r"\b(\d{1,2})\b", text)
+            if day_m:
+                return mon, int(day_m.group(1))
+    return None
+
+
+def _resolve_requested_datetime(
+    db: Session, month_day: tuple[int, int] | None, weekday: int | None, hour: int, minute: int
+):
+    """Build the exact datetime the customer named, anchored to a concrete date.
+
+    Walks the look-ahead window for the first day matching the named month/day or
+    weekday and stamps the requested clock time on it (in the configured tz).
+    Returns None if no date was named (we won't guess which day they meant) or no
+    matching day falls inside the window.
+    """
+    if month_day is None and weekday is None:
+        return None
+    cfg = gcal_svc.load_scheduling_config(db)
+    now = datetime.now(tz=cfg.tz)
+    for offset in range(cfg.lookahead_days + 1):
+        day = (now + timedelta(days=offset)).date()
+        if month_day and (day.month, day.day) != month_day:
+            continue
+        if weekday is not None and day.weekday() != weekday:
+            continue
+        return datetime(day.year, day.month, day.day, hour, minute, tzinfo=cfg.tz)
+    return None
+
+
+def _match_open_slot(db: Session, date_text: str, time_text: str):
+    """Find the real open slot matching the customer's stated day + time.
+
+    We never trust a model-built timestamp: we re-fetch the actual open slots and
+    match on (hour, minute) plus the date or weekday the customer named. This is
+    robust to small models that fumble ISO/timezone math, and guarantees we only
+    book a time that is genuinely open right now.
+
+    Preference order:
+      1. An exact open *grid* slot (one of the times we'd display) on the named day.
+      2. Failing that, the exact time the customer asked for if it's still a valid,
+         free in-window time — so a request like "9:45?" between offered slots is
+         honored instead of bounced as "not on the list" (it must still fit inside
+         business hours and not overlap a busy block; off-grid is allowed here).
+    """
+    clock = _parse_clock(time_text)
+    if clock is None:
+        return None
+    hour, minute = clock
+    month_day = _parse_month_day(date_text)
+    weekday = _parse_weekday(date_text)
+
+    # 1) Prefer an exact open grid slot matching the named date/day.
+    slots = gcal_svc.get_open_slots(db, max_slots=10_000)
+    candidates = [s for s in slots if s.hour == hour and s.minute == minute]
+    for s in candidates:
+        if month_day and (s.month, s.day) == month_day:
+            return s
+    for s in candidates:
+        if weekday is not None and s.weekday() == weekday:
+            return s
+    if month_day is None and weekday is None and candidates:
+        return candidates[0]
+
+    # 2) No grid slot, but if the customer named a specific day + a real, still-free
+    #    in-window time, honor that exact time even though it's between offered slots.
+    requested = _resolve_requested_datetime(db, month_day, weekday, hour, minute)
+    if requested is not None and gcal_svc.slot_is_available(db, requested, on_grid=False):
+        return requested
+    return None
+
+
+def _handle_check_availability(tool_input: dict, db: Session) -> str:
+    try:
+        return gcal_svc.get_availability_message(
+            db,
+            weekday=_parse_weekday(tool_input.get("day", "")),
+            period=_parse_period(tool_input.get("period", "")),
+        )
+    except Exception as exc:
+        if settings.google_booking_url:
+            return f"Book directly here: {settings.google_booking_url}"
+        return (
+            f"Unable to fetch availability ({exc}). "
+            "Please email primemicromarkets@gmail.com to schedule."
+        )
+
+
+def _handle_book_appointment(tool_input: dict, session_id: str, db: Session) -> str:
+    name = (tool_input.get("name") or "").strip()
+    phone = (tool_input.get("phone") or "").strip()
+    location = (tool_input.get("location") or "").strip()
+    email = (tool_input.get("email") or "").strip() or None
+    notes = (tool_input.get("notes") or "").strip() or None
+    date_text = (tool_input.get("date") or "").strip()
+    time_text = (tool_input.get("time") or "").strip()
+
+    missing = [
+        label
+        for label, val in (
+            ("name", name),
+            ("phone", phone),
+            ("location", location),
+            ("a date", date_text),
+            ("a time", time_text),
+        )
+        if not val
+    ]
+    if missing:
+        return (
+            "Before booking, ask the customer for the missing details: "
+            + ", ".join(missing)
+            + ". Do not book until you have a chosen time, name, phone, and location."
+        )
+
+    try:
+        slot = _match_open_slot(db, date_text, time_text)
+    except Exception as exc:
+        _log.warning("Booking slot lookup failed: %s", exc)
+        slot = None
+    if slot is None:
+        return (
+            "That time isn't on the open list. Call check_availability again and offer the "
+            "customer one of the exact times it returns, then book the one they choose."
+        )
+
+    label = gcal_svc._format_label(slot)
+    summary = f"Prime Micro Markets consultation — {name}"
+    desc_lines = [
+        "Booked via the website chatbot.",
+        f"Name: {name}",
+        f"Phone: {phone}",
+    ]
+    if email:
+        desc_lines.append(f"Email: {email}")
+    desc_lines.append(f"Location: {location}")
+    if notes:
+        desc_lines.append(f"Notes: {notes}")
+    desc_lines.append(f"Chat session: {session_id[:8]}")
+    description = "\n".join(desc_lines)
+
+    booked = False
+    try:
+        gcal_svc.create_event(
+            db, start=slot, summary=summary, description=description, attendee_email=email
+        )
+        booked = True
+    except gcal_svc.CalendarWriteError as exc:
+        _log.warning(
+            "Calendar booking unavailable (needs_reconnect=%s): %s",
+            getattr(exc, "needs_reconnect", False),
+            exc,
+        )
+    except Exception as exc:
+        _log.warning("Calendar booking failed: %s", exc)
+
+    try:
+        _save_booking_lead(name, email, phone, location, notes, label, booked, session_id, db)
+    except Exception:
+        _log.exception("Failed to save booking lead")
+
+    # Stash the appointment for this session so a follow-up "email me the details"
+    # builds the confirmation from the real booking rather than model-recalled text.
+    try:
+        db.add(
+            ChatMessage(
+                session_id=session_id,
+                role="tool",
+                tool_name=_BOOKING_RECORD_TOOL,
+                content=json.dumps(
+                    {
+                        "name": name,
+                        "email": email,
+                        "phone": phone,
+                        "location": location,
+                        "slot_label": label,
+                        "start_iso": slot.isoformat(),
+                        "booked": booked,
+                    }
+                ),
+            )
+        )
+        db.commit()
+    except Exception:
+        _log.exception("Failed to record appointment for session %s", session_id[:8])
+
+    if booked:
+        invite = " A calendar invite is on its way to your email." if email else ""
+        return (
+            f"{_BOOKING_CONFIRMED_MARKER} for {label}.{invite} "
+            f"We have your details on file ({name}, {phone}) — we look forward to meeting you!"
+        )
+    return (
+        f"Thanks {name}! I've recorded your requested time ({label}) along with your details, "
+        "and a team member will confirm shortly by phone or email."
+    )
+
+
+def _save_booking_lead(
+    name: str,
+    email: str | None,
+    phone: str | None,
+    location: str | None,
+    notes: str | None,
+    slot_label: str,
+    booked: bool,
+    session_id: str,
+    db: Session,
+) -> None:
+    from app.models.sales import OutreachLog, Prospect
+
+    status = "Booked consultation" if booked else "Requested consultation (pending confirm)"
+    note_parts = [f"{status}: {slot_label}"]
+    if notes:
+        note_parts.append(f"Notes: {notes}")
+    note_parts.append(f"Chatbot session: {session_id[:8]}")
+
+    prospect = Prospect(
+        company_name=(location or f"Consultation — {name}")[:200],
+        contact_name=name[:150],
+        contact_email=email[:200] if email else None,
+        contact_phone=phone[:30] if phone else None,
+        address=location[:300] if location else None,
+        source="AI Chatbot — Booked Consultation",
+        notes=" | ".join(note_parts),
+        pipeline_stage="qualified" if booked else "lead",
+    )
+    db.add(prospect)
+    db.flush()
+    db.add(
+        OutreachLog(
+            prospect_id=prospect.id,
+            channel="chatbot",
+            direction="inbound",
+            contacted_at=datetime.now(),
+            subject_or_summary=f"{status} via AI Chatbot",
+            notes=f"{status} for {slot_label}. Session: {session_id[:8]}.",
+        )
+    )
+    db.commit()
+
+
+def _latest_booking_record(session_id: str, db: Session) -> dict | None:
+    row = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "tool",
+            ChatMessage.tool_name == _BOOKING_RECORD_TOOL,
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    if not row:
+        return None
+    try:
+        return json.loads(row.content)
+    except (ValueError, TypeError):
+        return None
+
+
+def _update_booking_record(session_id: str, db: Session, **changes: object) -> dict | None:
+    """Merge ``changes`` into the latest stored appointment record for the session."""
+    row = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "tool",
+            ChatMessage.tool_name == _BOOKING_RECORD_TOOL,
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    if not row:
+        return None
+    try:
+        data = json.loads(row.content)
+    except (ValueError, TypeError):
+        data = {}
+    data.update(changes)
+    row.content = json.dumps(data)
+    db.commit()
+    return data
+
+
+# Matches an email address / an affirmative reply, for the deterministic
+# confirmation-email path (see _maybe_send_confirmation_email).
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+_AFFIRM_RE = re.compile(
+    r"\b(yes|yep|yeah|yup|sure|please|ok|okay|sounds good|that works|go ahead|"
+    r"confirm|do it|send it)\b",
+    re.IGNORECASE,
+)
+
+
+def _send_confirmation_email_now(
+    session_id: str, record: dict, recipient: str, db: Session
+) -> bool:
+    """Send the confirmation and mark the record so it can't double-send. Raises on send failure.
+
+    Uses the Gmail-API-first sender so the email still goes out on hosts that
+    block outbound SMTP (the cause of confirmations silently never arriving).
+    """
+    subject, body = _confirmation_email_content({**record, "email": recipient})
+    email_sender.send_appointment_confirmation(db, recipient, subject, body)
+    _update_booking_record(session_id, db, email=recipient, email_sent=True)
+    return True
+
+
+def _confirmation_email_content(record: dict) -> tuple[str, str]:
+    name = (record.get("name") or "there").strip()
+    slot = record.get("slot_label") or "your selected time"
+    location = (record.get("location") or "").strip()
+    phone = (record.get("phone") or "").strip()
+
+    if record.get("booked"):
+        lead = f"Your consultation with Prime Micro Markets is confirmed for {slot}."
+    else:
+        lead = (
+            f"We've received your requested consultation time ({slot}) and a team member "
+            "will confirm it shortly."
+        )
+
+    lines = [f"Hi {name},", "", lead, "", "Details:", f"  When: {slot}"]
+    if location:
+        lines.append(f"  Where: {location}")
+    if phone:
+        lines.append(f"  Your contact number: {phone}")
+    lines += [
+        "",
+        "During the visit our team will evaluate your location for a smart cooler or "
+        "micro market — installed at no cost to your business.",
+        "",
+        "Need to make a change? Just reply to this email or call us.",
+        "",
+        "— Prime Micro Markets",
+        "primemicromarkets@gmail.com",
+    ]
+    return f"Your Prime Micro Markets consultation — {slot}", "\n".join(lines)
+
+
+def _handle_send_confirmation_email(tool_input: dict, session_id: str, db: Session) -> str:
+    record = _latest_booking_record(session_id, db)
+    if not record:
+        return (
+            "No appointment has been booked in this conversation yet, so there's nothing "
+            "to email. Book the appointment first."
+        )
+    if record.get("email_sent"):
+        return f"A confirmation email was already sent to {record.get('email')}."
+    recipient = (tool_input.get("email") or "").strip() or (record.get("email") or "").strip()
+    if not recipient:
+        return (
+            "Ask the customer for the email address to send the confirmation to, then call "
+            "this tool again with their email."
+        )
+    try:
+        _send_confirmation_email_now(session_id, record, recipient, db)
+    except Exception as exc:
+        _log.warning("Confirmation email send failed: %s", exc)
+        return (
+            "I couldn't send the confirmation email just now, but the appointment details "
+            "are saved and our team will follow up. Let the customer know."
+        )
+    return f"Confirmation email sent to {recipient} with the appointment details."
+
+
+def _last_assistant_offered_email(session_id: str, db: Session) -> bool:
+    """True if the most recent assistant turn asked about emailing a confirmation."""
+    row = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id, ChatMessage.role == "assistant")
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    return bool(row and re.search(r"email|confirmation", row.content or "", re.IGNORECASE))
+
+
+def _maybe_send_confirmation_email(
+    session_id: str, user_message: str, reply: str, captured: dict, db: Session
+) -> str:
+    """Deterministically send the confirmation email once the visitor supplies/approves it.
+
+    Small models often forget to call send_appointment_email and instead drift back into
+    scheduling. So after a booking exists, if the visitor's latest message gives an email
+    (or approves one already on file), we send here regardless of what the model did and
+    replace the reply with a clean confirmation — guaranteeing the email actually goes out
+    and the conversation wraps up.
+    """
+    if "booking" in captured:
+        return reply  # booking happened THIS turn; the bot will offer the email next
+    record = _latest_booking_record(session_id, db)
+    if not record or record.get("email_sent"):
+        return reply
+
+    email_in_msg = _EMAIL_RE.search(user_message or "")
+    affirmed = bool(
+        _AFFIRM_RE.search(user_message or "") and _last_assistant_offered_email(session_id, db)
+    )
+    if email_in_msg:
+        recipient = email_in_msg.group(0)
+    elif affirmed and record.get("email"):
+        recipient = record["email"]
+    elif affirmed:
+        # They said yes but we have no address on file. Ask for it deterministically so
+        # the model can't wrongly claim it'll send to an address "on file".
+        return "Great — what email address should I send the confirmation to?"
+    else:
+        return reply  # nothing actionable this turn
+
+    try:
+        _send_confirmation_email_now(session_id, record, recipient, db)
+    except Exception as exc:
+        _log.warning("Auto confirmation email failed: %s", exc)
+        _update_booking_record(session_id, db, email=recipient)
+        return (
+            f"Your appointment is saved, but I couldn't email the confirmation to {recipient} "
+            "right now — our team will follow up to make sure you have the details. "
+            "Is there anything else I can help with?"
+        )
+    return (
+        f"✅ I've emailed your confirmation to {recipient} with the appointment details. "
+        "Is there anything else I can help with?"
+    )
+
+
 def _handle_tool(name: str, tool_input: dict, session_id: str, db: Session) -> str:
     if name == "check_availability":
-        try:
-            return gcal_svc.get_availability_message(db)
-        except Exception as exc:
-            if settings.google_booking_url:
-                return f"Book directly here: {settings.google_booking_url}"
-            return f"Unable to fetch availability ({exc}). Please email primemicromarkets@gmail.com to schedule."
+        return _handle_check_availability(tool_input, db)
+
+    if name == "send_appointment_email":
+        return _handle_send_confirmation_email(tool_input, session_id, db)
+
+    if name == "book_appointment":
+        return _handle_book_appointment(tool_input, session_id, db)
 
     if name == "capture_lead":
         return _handle_capture_lead(tool_input, session_id, db)
@@ -399,7 +1113,13 @@ def _run_anthropic(
             model=model,
             max_tokens=_MAX_TOKENS_CHAT,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            tools=[_TOOL_AVAILABILITY, _TOOL_ESCALATE, _TOOL_CAPTURE_LEAD],
+            tools=[
+                _TOOL_AVAILABILITY,
+                _TOOL_BOOK,
+                _TOOL_SEND_EMAIL,
+                _TOOL_ESCALATE,
+                _TOOL_CAPTURE_LEAD,
+            ],
             messages=messages,
         )
         messages.append({"role": "assistant", "content": response.content})
@@ -414,6 +1134,8 @@ def _run_anthropic(
                 result = _handle_tool(block.name, block.input, session_id, db)
                 if captured is not None and block.name == "check_availability":
                     captured["availability"] = result
+                if captured is not None and block.name == "book_appointment":
+                    captured["booking"] = result
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -479,7 +1201,13 @@ def _run_openai_compat(
         response = client.chat.completions.create(
             model=model,
             messages=oai_messages,
-            tools=[_TOOL_AVAILABILITY_OAI, _TOOL_ESCALATE_OAI, _TOOL_CAPTURE_LEAD_OAI],
+            tools=[
+                _TOOL_AVAILABILITY_OAI,
+                _TOOL_BOOK_OAI,
+                _TOOL_SEND_EMAIL_OAI,
+                _TOOL_ESCALATE_OAI,
+                _TOOL_CAPTURE_LEAD_OAI,
+            ],
             tool_choice="auto",
             max_tokens=max_tokens,
         )
@@ -501,6 +1229,8 @@ def _run_openai_compat(
             result = _handle_tool(tc.function.name, tool_input, session_id, db)
             if captured is not None and tc.function.name == "check_availability":
                 captured["availability"] = result
+            if captured is not None and tc.function.name == "book_appointment":
+                captured["booking"] = result
             oai_messages.append(
                 {
                     "role": "tool",
@@ -595,8 +1325,8 @@ def _extract_ollama_lead(reply: str, session_id: str, db: Session) -> str:
         return reply
     try:
         _save_lead_from_conversation(session_id, db)
-    except Exception:
-        pass  # DB error must not break the chat response
+    except Exception as exc:
+        _log.debug("Ollama lead capture failed (non-fatal): %s", exc)  # must not break chat
     return _CONTACT_MARKER_RE.sub("", reply).strip()
 
 
@@ -612,6 +1342,11 @@ def _error_message(exc: Exception) -> str:
 
 # Marker that google_calendar.format_slots_for_chat prefixes to a real slot list.
 _AVAIL_SLOTS_MARKER = "Here are the next available consultation times"
+# Customer-facing prefix on a successful booking confirmation.
+_BOOKING_CONFIRMED_MARKER = "✅ Your consultation is confirmed"
+# A clock time like "10:00 AM" — used to tell if the model already wrote out the
+# slot times itself (timezone-agnostic, so it survives a configured-tz change).
+_CLOCK_TIME_RE = re.compile(r"\d{1,2}:\d{2}\s*(?:AM|PM)", re.IGNORECASE)
 
 
 def _ensure_availability_shown(reply: str, captured: dict) -> str:
@@ -625,9 +1360,24 @@ def _ensure_availability_shown(reply: str, captured: dict) -> str:
     avail = captured.get("availability", "")
     if not avail.startswith(_AVAIL_SLOTS_MARKER):
         return reply  # tool unused, no openings, or a fallback link — leave as-is
-    if "AM CT" in reply or "PM CT" in reply:
+    if _CLOCK_TIME_RE.search(reply):
         return reply  # model already listed the times; don't duplicate
     return f"{avail}\n\n{reply}".strip() if reply.strip() else avail
+
+
+def _ensure_booking_shown(reply: str, captured: dict) -> str:
+    """Guarantee a booking confirmation reaches the customer.
+
+    If book_appointment ran, the tool result is already a clean customer-facing
+    line. If the model's own reply doesn't restate the time, use/prepend the
+    confirmation so the customer always gets a concrete outcome.
+    """
+    booking = captured.get("booking", "")
+    if not booking:
+        return reply
+    if _CLOCK_TIME_RE.search(reply):
+        return reply  # model already restated the booked time
+    return f"{booking}\n\n{reply}".strip() if reply.strip() else booking
 
 
 def _dispatch(
@@ -757,6 +1507,8 @@ def get_chatbot_reply(session_id: str, user_message: str, db: Session, before_id
             reply = _error_message(primary_exc)
 
     reply = _ensure_availability_shown(reply, captured)
+    reply = _ensure_booking_shown(reply, captured)
+    reply = _maybe_send_confirmation_email(session_id, user_message, reply, captured, db)
     db.add(ChatMessage(session_id=session_id, role="assistant", content=reply))
     db.commit()
     return reply
