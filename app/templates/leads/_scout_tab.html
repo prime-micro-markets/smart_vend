@@ -1,3 +1,9 @@
+<style>
+  /* Search button progress state — toggled by htmx-request on the form. */
+  .scout-searching-label { display: none; }
+  .htmx-request .scout-search-label { display: none; }
+  .htmx-request .scout-searching-label { display: inline; }
+</style>
 <div class="d-flex justify-content-end mb-2">
   <button class="btn btn-sm btn-link text-muted p-0" type="button"
           data-bs-toggle="collapse" data-bs-target="#scout-help" title="Help &amp; instructions">
@@ -34,7 +40,7 @@
         <form hx-post="/leads/scout/search"
               hx-target="#scout-results"
               hx-swap="innerHTML"
-              hx-indicator="#scout-spinner">
+              hx-disabled-elt="find button[type='submit']">
           <div class="mb-3">
             <label class="form-label fw-semibold small">Location</label>
             <input type="text" name="query" class="form-control form-control-sm"
@@ -69,8 +75,10 @@
           </div>
 
           <button type="submit" class="btn btn-primary btn-sm">
-            <i class="bi bi-search me-1"></i>Search This Area
-            <span id="scout-spinner" class="htmx-indicator spinner-border spinner-border-sm ms-1" role="status"></span>
+            <span class="htmx-indicator spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <i class="bi bi-search me-1"></i>
+            <span class="scout-search-label">Search This Area</span>
+            <span class="scout-searching-label">Searching…</span>
           </button>
         </form>
       </div>

@@ -9,17 +9,10 @@
 <!-- Tabs -->
 <ul class="nav nav-tabs mb-0" id="leadsTabs" role="tablist">
   <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab != 'contracts' %}active{% endif %}"
+    <button class="nav-link {% if active_tab == 'research' %}active{% endif %}"
             id="tab-research" data-bs-toggle="tab" data-bs-target="#pane-research"
             type="button" role="tab">
       <i class="bi bi-search me-1"></i>Prospect Research
-    </button>
-  </li>
-  <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab == 'contracts' %}active{% endif %}"
-            id="tab-contracts" data-bs-toggle="tab" data-bs-target="#pane-contracts"
-            type="button" role="tab">
-      <i class="bi bi-bank me-1"></i>Gov Contracts
     </button>
   </li>
   <li class="nav-item" role="presentation">
@@ -29,12 +22,19 @@
       <i class="bi bi-geo-alt-fill me-1"></i>Scout Map
     </button>
   </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'contracts' %}active{% endif %}"
+            id="tab-contracts" data-bs-toggle="tab" data-bs-target="#pane-contracts"
+            type="button" role="tab">
+      <i class="bi bi-bank me-1"></i>Gov Contracts
+    </button>
+  </li>
 </ul>
 
 <div class="tab-content border border-top-0 rounded-bottom p-3 bg-body" id="leadsTabContent">
 
   <!-- ── Prospect Research ─────────────────────────────────────────────── -->
-  <div class="tab-pane fade {% if active_tab != 'contracts' %}show active{% endif %}"
+  <div class="tab-pane fade {% if active_tab == 'research' %}show active{% endif %}"
        id="pane-research" role="tabpanel" aria-labelledby="tab-research">
 
     <div class="d-flex justify-content-end mb-2">
@@ -200,16 +200,16 @@
     </div>
   </div>
 
-  <!-- ── Gov Contracts (SAM.gov) ───────────────────────────────────────── -->
-  <div class="tab-pane fade {% if active_tab == 'contracts' %}show active{% endif %}"
-       id="pane-contracts" role="tabpanel" aria-labelledby="tab-contracts">
-    {% include "leads/_contracts_tab.html" %}
-  </div>
-
   <!-- ── Scout Map (OpenStreetMap placement prospecting) ───────────────── -->
   <div class="tab-pane fade {% if active_tab == 'scout' %}show active{% endif %}"
        id="pane-scout" role="tabpanel" aria-labelledby="tab-scout">
     {% include "leads/_scout_tab.html" %}
+  </div>
+
+  <!-- ── Gov Contracts (SAM.gov) ───────────────────────────────────────── -->
+  <div class="tab-pane fade {% if active_tab == 'contracts' %}show active{% endif %}"
+       id="pane-contracts" role="tabpanel" aria-labelledby="tab-contracts">
+    {% include "leads/_contracts_tab.html" %}
   </div>
 
 </div>
