@@ -84,10 +84,25 @@ def prospect_card_modal(
     prospect = db.get(Prospect, prospect_id)
     if not prospect:
         return Response(status_code=404)
+    sent = [log for log in prospect.outreach_logs if log.outcome == "sent"]
+    last_draft = (
+        db.query(AgentJob)
+        .filter(
+            AgentJob.job_type == "email_draft",
+            AgentJob.prospect_id == prospect.id,
+            AgentJob.status == "done",
+        )
+        .order_by(AgentJob.created_at.desc())
+        .first()
+    )
     return templates.TemplateResponse(
         request,
         "sales/_prospect_modal.html",
-        {"prospect": prospect},
+        {
+            "prospect": prospect,
+            "last_sent_at": sent[0].contacted_at if sent else None,
+            "draft_job": last_draft if last_draft and last_draft.draft_body else None,
+        },
     )
 
 

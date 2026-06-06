@@ -60,17 +60,44 @@ def _prospect_names(db: Session, jobs: list[AgentJob]) -> dict[int, str]:
     return {r[0]: r[1] for r in rows}
 
 
+def _outreach_status(
+    db: Session, prospects: list[Prospect], email_jobs: list[AgentJob]
+) -> dict[int, dict]:
+    """Per-prospect outreach state for the Email tab badges: whether an email was
+    actually sent (``OutreachLog(outcome="sent")``) and whether a draft is ready."""
+    status: dict[int, dict] = {}
+    # Latest ready email_draft job per prospect (jobs already ordered newest-first).
+    for job in email_jobs:
+        if not job.prospect_id or job.prospect_id in status:
+            continue
+        if job.status == "done" and job.draft_body:
+            status[job.prospect_id] = {"has_draft": True, "last_draft_job_id": job.id}
+    for p in prospects:
+        entry = status.setdefault(p.id, {"has_draft": False, "last_draft_job_id": None})
+        sent = [log for log in p.outreach_logs if log.outcome == "sent"]
+        entry["sent_at"] = sent[0].contacted_at if sent else None
+    return status
+
+
 @router.get("/", response_class=HTMLResponse)
 def leads_index(
     request: Request, tab: str = "research", db: Session = Depends(get_db)
 ) -> HTMLResponse:
     jobs = (
         db.query(AgentJob)
-        .filter(AgentJob.job_type.in_(["research", "email_draft"]))
+        .filter(AgentJob.job_type == "research")
         .order_by(AgentJob.created_at.desc())
         .limit(100)
         .all()
     )
+    email_jobs = (
+        db.query(AgentJob)
+        .filter(AgentJob.job_type == "email_draft")
+        .order_by(AgentJob.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    prospects = db.query(Prospect).order_by(Prospect.updated_at.desc()).all()
     current_provider = _get_setting(db, "search_provider", "duckduckgo")
     saved_contracts = db.query(SavedContract).order_by(SavedContract.saved_at.desc()).all()
     scouted = db.query(ScoutedLocation).order_by(ScoutedLocation.opportunity_score.desc()).all()
@@ -79,9 +106,13 @@ def leads_index(
         "leads/index.html",
         {
             "active_nav": "leads",
-            "active_tab": tab if tab in ("research", "contracts", "scout") else "research",
+            "active_tab": tab if tab in ("research", "contracts", "scout", "email") else "research",
             "jobs": jobs,
-            "prospect_names": _prospect_names(db, jobs),
+            # Email Outreach tab
+            "email_jobs": email_jobs,
+            "prospects": prospects,
+            "prospect_names": _prospect_names(db, email_jobs),
+            "outreach_status": _outreach_status(db, prospects, email_jobs),
             "venue_options": VENUE_TYPE_OPTIONS,
             "current_provider": current_provider,
             # Gov Contracts tab
@@ -159,7 +190,7 @@ def leads_research(
 def leads_jobs_list(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     jobs = (
         db.query(AgentJob)
-        .filter(AgentJob.job_type.in_(["research", "email_draft"]))
+        .filter(AgentJob.job_type == "research")
         .order_by(AgentJob.created_at.desc())
         .limit(100)
         .all()
@@ -219,6 +250,7 @@ def leads_draft_review(
 @router.post("/prospects/{prospect_id}/draft", response_class=HTMLResponse)
 def leads_draft_email(
     prospect_id: int,
+    request: Request,
     background_tasks: BackgroundTasks,
     preview_mode: bool = Form(False),
     db: Session = Depends(get_db),
@@ -235,6 +267,14 @@ def leads_draft_email(
     db.add(job)
     db.commit()
     background_tasks.add_task(agent.run_email_draft_job, job.id)
+    # HTMX callers (Email tab, contact card) get the inline polling card swapped in
+    # place; legacy plain-form posts still redirect to the full job status page.
+    if request.headers.get("HX-Request") == "true":
+        return templates.TemplateResponse(
+            request,
+            "leads/_job_status_card.html",
+            {"job": job, "prospects_list": []},
+        )
     return RedirectResponse(url=f"/leads/jobs/{job.id}", status_code=303)
 
 
@@ -284,6 +324,9 @@ def leads_send_direct(
         outcome="sent",
     )
     db.add(log)
+    # A real send moves a fresh lead into the "contacted" stage automatically.
+    if prospect.pipeline_stage == "lead":
+        prospect.pipeline_stage = "contacted"
     db.commit()
     return RedirectResponse(url=f"/sales/{prospect_id}", status_code=303)
 
@@ -343,6 +386,9 @@ def leads_send_email(
             outcome="sent",
         )
         db.add(log)
+        # A real send moves a fresh lead into the "contacted" stage automatically.
+        if prospect.pipeline_stage == "lead":
+            prospect.pipeline_stage = "contacted"
         db.commit()
         return RedirectResponse(url=f"/sales/{prospect.id}", status_code=303)
 

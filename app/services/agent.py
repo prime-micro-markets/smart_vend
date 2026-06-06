@@ -566,6 +566,38 @@ def _build_prospect_enrich_prompt(prospect: Prospect) -> str:
     )
 
 
+def _append_ai_findings_to_notes(prospect: Prospect, data: dict[str, Any]) -> None:
+    """Append a timestamped block of AI findings to the prospect's notes.
+
+    Notes are an append-only, operator-trusted record: each research run adds a new
+    delimited section rather than overwriting whatever is already on file. Does
+    nothing when the run produced no usable findings (empty/errored job)."""
+    if not data:
+        return
+    lines: list[str] = []
+    summary = (data.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+    employees = (data.get("employees") or "").strip()
+    if employees:
+        lines.append(f"Est. employees: {employees}")
+    foot_traffic = (data.get("foot_traffic") or "").strip()
+    if foot_traffic:
+        lines.append(f"Foot traffic: {foot_traffic}")
+    contact_name = (data.get("contact_name") or "").strip()
+    if contact_name:
+        title = (data.get("contact_title") or "").strip()
+        lines.append(f"Likely contact: {contact_name}{f', {title}' if title else ''}")
+    has_vending = (data.get("has_vending") or "").strip()
+    if has_vending:
+        lines.append(f"Vending read: {has_vending}")
+    if not lines:
+        return
+    header = f"── AI research ({datetime.now().strftime('%b %d, %Y')}) ──"
+    block = header + "\n" + "\n".join(lines)
+    prospect.notes = f"{prospect.notes}\n\n{block}" if prospect.notes else block
+
+
 def run_prospect_enrich_job(job_id: int) -> None:
     """Background task: AI deep-dive on one sales-pipeline prospect.
 
@@ -602,14 +634,29 @@ def run_prospect_enrich_job(job_id: int) -> None:
                 context="prospect enrich",
             )
 
-            prospect.ai_summary = (data.get("summary") or "").strip() or None
-            prospect.ai_employees = (data.get("employees") or "").strip() or None
-            prospect.ai_foot_traffic = (data.get("foot_traffic") or "").strip().lower() or None
-            prospect.ai_contact_name = (data.get("contact_name") or "").strip() or None
-            prospect.ai_contact_title = (data.get("contact_title") or "").strip() or None
-            prospect.ai_contact_email = (data.get("contact_email") or "").strip() or None
-            prospect.ai_contact_phone = (data.get("contact_phone") or "").strip() or None
-            prospect.ai_has_vending = (data.get("has_vending") or "").strip()[:400] or None
+            # Update each structured field with the fresh value, but never blank out
+            # a previously-found one when this run comes back empty (a sparse re-run
+            # must enhance, not erase — see _append_ai_findings_to_notes below).
+            prospect.ai_summary = (data.get("summary") or "").strip() or prospect.ai_summary
+            prospect.ai_employees = (data.get("employees") or "").strip() or prospect.ai_employees
+            prospect.ai_foot_traffic = (
+                data.get("foot_traffic") or ""
+            ).strip().lower() or prospect.ai_foot_traffic
+            prospect.ai_contact_name = (
+                data.get("contact_name") or ""
+            ).strip() or prospect.ai_contact_name
+            prospect.ai_contact_title = (
+                data.get("contact_title") or ""
+            ).strip() or prospect.ai_contact_title
+            prospect.ai_contact_email = (
+                data.get("contact_email") or ""
+            ).strip() or prospect.ai_contact_email
+            prospect.ai_contact_phone = (
+                data.get("contact_phone") or ""
+            ).strip() or prospect.ai_contact_phone
+            prospect.ai_has_vending = (data.get("has_vending") or "").strip()[
+                :400
+            ] or prospect.ai_has_vending
             # Fold the findings into the proper contact-card fields, filling any
             # that the operator left blank (never clobbering data already on file).
             if not prospect.contact_name and prospect.ai_contact_name:
@@ -632,12 +679,13 @@ def run_prospect_enrich_job(job_id: int) -> None:
             # researched signals (venue fit + foot traffic + on-site vending).
             has_vending = "yes" in (prospect.ai_has_vending or "").lower()
             tier = geo_scout.score_to_tier(
-                geo_scout.score_prospect(
-                    prospect.venue_type, prospect.ai_foot_traffic, has_vending
-                )
+                geo_scout.score_prospect(prospect.venue_type, prospect.ai_foot_traffic, has_vending)
             )
             if tier:
                 prospect.tier = tier
+            # Fold the findings into notes as an append-only, timestamped block so
+            # re-running research accumulates detail instead of overwriting good info.
+            _append_ai_findings_to_notes(prospect, data)
             prospect.ai_researched_at = datetime.now()
             prospect.ai_status = "done" if data else "error"
 

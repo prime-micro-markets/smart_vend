@@ -93,6 +93,38 @@
 </div>
 
 <hr class="my-3">
+<div class="small">
+  <h6 class="text-muted text-uppercase small fw-semibold mb-2">Outreach</h6>
+  {% set last_sent_at = last_sent_at if last_sent_at is defined else None %}
+  {% set draft_job = draft_job if draft_job is defined else None %}
+  <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+    {% if last_sent_at %}
+    <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+      <i class="bi bi-send-check me-1"></i>Emailed {{ last_sent_at.strftime('%b %d, %Y') }}
+    </span>
+    {% elif draft_job %}
+    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+      <i class="bi bi-pencil-square me-1"></i>Draft ready
+    </span>
+    <a href="/leads/jobs/{{ draft_job.id }}/draft" class="btn btn-sm btn-success py-0" style="font-size:.78rem">
+      <i class="bi bi-envelope-open me-1"></i>Review &amp; Send
+    </a>
+    {% else %}
+    <span class="badge bg-light text-muted border">Not yet contacted</span>
+    {% endif %}
+  </div>
+  <div id="prospect-email-{{ prospect.id }}">
+    <button class="btn btn-sm btn-outline-primary"
+            hx-post="/leads/prospects/{{ prospect.id }}/draft"
+            hx-target="#prospect-email-{{ prospect.id }}"
+            hx-swap="innerHTML"
+            {% if draft_job or last_sent_at %}hx-confirm="Generate a new AI outreach email for {{ prospect.company_name }}?"{% endif %}>
+      <i class="bi bi-envelope-paper me-1"></i>Draft outreach email (AI)
+    </button>
+  </div>
+</div>
+
+<hr class="my-3">
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div class="d-flex gap-2">
     <a href="/sales/{{ prospect.id }}" class="btn btn-sm btn-primary">

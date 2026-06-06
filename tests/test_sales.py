@@ -92,3 +92,12 @@ def test_prospect_delete(client: TestClient, db: Session) -> None:
 
 def test_prospect_404(client: TestClient) -> None:
     assert client.get("/sales/9999").status_code == 404
+
+
+def test_prospect_card_modal_shows_outreach_section(client: TestClient, db: Session) -> None:
+    p = _make_prospect(db)
+    resp = client.get(f"/sales/{p.id}/card")
+    assert resp.status_code == 200
+    assert "Outreach" in resp.text
+    assert "Draft outreach email (AI)" in resp.text
+    assert "Not yet contacted" in resp.text
