@@ -56,10 +56,15 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-6">
+    <div class="col-md-4">
       <label class="form-label small fw-semibold">City</label>
       <input type="text" name="city" class="form-control form-control-sm"
              value="{{ prospect.city if is_edit else 'Panama City' }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold">State</label>
+      <input type="text" name="state" class="form-control form-control-sm" maxlength="2"
+             value="{{ prospect.state or '' if is_edit else 'FL' }}" placeholder="FL">
     </div>
     <div class="col-12">
       <label class="form-label small fw-semibold">Address</label>

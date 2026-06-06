@@ -15,7 +15,7 @@ from app.database import engine
 from app.models.agent import AgentJob
 from app.models.sales import Prospect
 from app.models.scout import ScoutedLocation
-from app.services import app_settings, web_search
+from app.services import app_settings, geo_scout, web_search
 
 logger = logging.getLogger(__name__)
 
@@ -551,6 +551,8 @@ def _build_prospect_enrich_prompt(prospect: Prospect) -> str:
         "  contact_email     - only if you actually found it\n"
         "  contact_phone     - main business phone\n"
         "  website           - official website URL\n"
+        "  address           - street address of the business, if you can find it\n"
+        "  state             - 2-letter US state code for the business (e.g. FL)\n"
         "  has_vending       - short verdict on whether they likely ALREADY have vending / a "
         "micro market on site, with a brief reason\n"
     )
@@ -599,16 +601,35 @@ def run_prospect_enrich_job(job_id: int) -> None:
             prospect.ai_contact_title = (data.get("contact_title") or "").strip() or None
             prospect.ai_contact_email = (data.get("contact_email") or "").strip() or None
             prospect.ai_contact_phone = (data.get("contact_phone") or "").strip() or None
-            prospect.ai_has_vending = (data.get("has_vending") or "").strip()[:160] or None
-            # Backfill blank base contact fields from the AI findings.
+            prospect.ai_has_vending = (data.get("has_vending") or "").strip()[:400] or None
+            # Fold the findings into the proper contact-card fields, filling any
+            # that the operator left blank (never clobbering data already on file).
+            if not prospect.contact_name and prospect.ai_contact_name:
+                prospect.contact_name = prospect.ai_contact_name[:150]
+            if not prospect.contact_title and prospect.ai_contact_title:
+                prospect.contact_title = prospect.ai_contact_title[:100]
             if not prospect.contact_phone and prospect.ai_contact_phone:
                 prospect.contact_phone = prospect.ai_contact_phone
             if not prospect.contact_email and prospect.ai_contact_email:
                 prospect.contact_email = prospect.ai_contact_email
             if not prospect.website and (data.get("website") or "").strip():
                 prospect.website = data["website"].strip()[:300]
+            if not prospect.address and (data.get("address") or "").strip():
+                prospect.address = data["address"].strip()[:300]
+            if not prospect.state and (data.get("state") or "").strip():
+                prospect.state = data["state"].strip()[:2].upper()
             if not prospect.foot_traffic_estimate and prospect.ai_foot_traffic:
                 prospect.foot_traffic_estimate = prospect.ai_foot_traffic
+            # Tier the prospect with the Scout Map's rating system from the freshly
+            # researched signals (venue fit + foot traffic + on-site vending).
+            has_vending = "yes" in (prospect.ai_has_vending or "").lower()
+            tier = geo_scout.score_to_tier(
+                geo_scout.score_prospect(
+                    prospect.venue_type, prospect.ai_foot_traffic, has_vending
+                )
+            )
+            if tier:
+                prospect.tier = tier
             prospect.ai_researched_at = datetime.now()
             prospect.ai_status = "done" if data else "error"
 

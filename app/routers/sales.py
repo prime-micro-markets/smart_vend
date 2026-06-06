@@ -146,6 +146,7 @@ def prospect_create(
     venue_type: str = Form(""),
     address: str = Form(""),
     city: str = Form("Panama City"),
+    state: str = Form(""),
     tier: str = Form(""),
     source: str = Form(""),
     estimated_machines: int = Form(1),
@@ -167,6 +168,7 @@ def prospect_create(
         venue_type=venue_type or None,
         address=address or None,
         city=city,
+        state=state or None,
         tier=tier or None,
         source=source or None,
         estimated_machines=estimated_machines,
@@ -194,6 +196,7 @@ def prospect_update(
     venue_type: str = Form(""),
     address: str = Form(""),
     city: str = Form("Panama City"),
+    state: str = Form(""),
     tier: str = Form(""),
     source: str = Form(""),
     estimated_machines: int = Form(1),
@@ -217,6 +220,7 @@ def prospect_update(
     prospect.venue_type = venue_type or None
     prospect.address = address or None
     prospect.city = city
+    prospect.state = state or None
     prospect.tier = tier or None
     prospect.source = source or None
     prospect.estimated_machines = estimated_machines

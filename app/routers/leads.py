@@ -798,6 +798,7 @@ def leads_scout_promote(scout_id: int, db: Session = Depends(get_db)) -> HTMLRes
         contact_email=row.ai_contact_email,
         contact_phone=row.ai_contact_phone or row.phone,
         foot_traffic_estimate=row.ai_foot_traffic,
+        tier=geo_scout.score_to_tier(row.opportunity_score),
         source="scout_map",
         notes=" ".join(note_bits),
     )
