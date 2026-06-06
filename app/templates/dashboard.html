@@ -21,7 +21,6 @@
         <li><strong>Financial Models</strong> — Build and compare pro-forma P&amp;L scenarios.</li>
         <li><strong>Locations &amp; Sales Pipeline</strong> — Manage prospects and signed machine locations.</li>
         <li><strong>CRM</strong> — Track active clients, MRR, and generate revenue reports.</li>
-        <li><strong>Inventory</strong> — Product catalog, stock levels, and price comparisons.</li>
         <li><strong>AI Lead Generation</strong> — Claude finds and emails potential location partners.</li>
         <li><strong>Customer Service</strong> — Manage the public-facing chatbot and email queue.</li>
       </ul>
@@ -122,24 +121,8 @@
     </div>
   </div>
 
-  <div class="col-6 col-md-4">
-    <div class="card h-100 border-danger border-opacity-25">
-      <div class="card-body">
-        <h6 class="card-title text-danger">
-          <i class="bi bi-box me-1"></i>Inventory
-        </h6>
-        <p class="card-text">
-          <span class="badge bg-secondary me-1">{{ inventory_skus }} SKUs</span>
-          {% if inventory_low_stock > 0 %}
-          <span class="badge bg-danger">{{ inventory_low_stock }} below par</span>
-          {% endif %}
-        </p>
-      </div>
-      <div class="card-footer bg-transparent">
-        <a href="/inventory/" class="btn btn-sm btn-outline-danger">View Inventory</a>
-      </div>
-    </div>
-  </div>
+  {# Inventory card removed 2026-06-05: Product Inventory shelved until Nayax —
+     see docs/inventory_overhaul_plan.md. #}
 
   <div class="col-6 col-md-4">
     <div class="card h-100 border-teal border-opacity-25">

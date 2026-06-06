@@ -27,7 +27,7 @@ from app.models import crm as _crm_models  # noqa: F401 — registers CRM models
 from app.models import sam_contract as _sam_contract_models  # noqa: F401 — registers SavedContract
 from app.models import settings as _settings_models  # noqa: F401 — registers AppSetting with Base
 from app.routers import crm as crm_router
-from app.routers import financial, inventory, leads, locations, research, root, sales
+from app.routers import financial, leads, locations, research, root, sales
 from app.routers import settings as settings_router
 from app.routers import auth as auth_router
 from app.routers import chatbot as chatbot_router
@@ -173,7 +173,13 @@ app.include_router(research.router, dependencies=_auth)
 app.include_router(financial.router, dependencies=_auth)
 app.include_router(locations.router, dependencies=_auth)
 app.include_router(sales.router, dependencies=_auth)
-app.include_router(inventory.router, dependencies=_auth)
+# Product Inventory shelved 2026-06-05: its goal (programmatic best-price cost
+# sourcing) is unreachable until Nayax is live — every real cost source is
+# login-gated and Sam's blocks server-side pulls (Akamai 412) even from a
+# residential IP. The router, templates, and data model are intentionally kept;
+# to bring the page back (rebuilt on the Nayax Core API), restore the import
+# above and uncomment the line below. See docs/inventory_overhaul_plan.md.
+# app.include_router(inventory.router, dependencies=_auth)
 app.include_router(leads.router, dependencies=_auth)
 app.include_router(cs_router.router, dependencies=_auth)
 app.include_router(crm_router.router, dependencies=_auth)

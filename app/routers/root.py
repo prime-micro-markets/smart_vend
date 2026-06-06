@@ -9,7 +9,6 @@ from app.models.crm import Client, ClientEquipment
 from app.models.email_approval import EmailApproval
 from app.models.equipment import EquipmentUnit
 from app.models.financial import MachineProForma
-from app.models.inventory import Product
 from app.models.location import Location
 from app.models.research import ResearchTask
 from app.models.sales import Prospect
@@ -43,14 +42,6 @@ def dashboard(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
             .count(),
             "pipeline_signed": db.query(Prospect)
             .filter(Prospect.pipeline_stage == "signed")
-            .count(),
-            "inventory_skus": db.query(Product).filter(Product.is_active.is_(True)).count(),
-            "inventory_low_stock": db.query(Product)
-            .filter(
-                Product.is_active.is_(True),
-                Product.par_level.is_not(None),
-                Product.on_hand_qty < Product.par_level,
-            )
             .count(),
             "cs_pending_emails": db.query(EmailApproval)
             .filter(EmailApproval.status == "pending")

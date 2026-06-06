@@ -72,11 +72,9 @@
             <i class="bi bi-people me-1 d-lg-none"></i>CRM
           </a>
         </li>
-        <li class="nav-item">
-          <a class="nav-link {% if active_nav == 'inventory' %}active{% endif %}" href="/inventory/">
-            <i class="bi bi-box me-1 d-lg-none"></i>Product Inventory
-          </a>
-        </li>
+        {# Product Inventory shelved 2026-06-05 until Nayax is live — see
+           docs/inventory_overhaul_plan.md. Restore this nav item when the page
+           is rebuilt on the Nayax Core API. #}
         <li class="nav-item">
           <a class="nav-link {% if active_nav == 'leads' %}active{% endif %}" href="/leads/">
             <i class="bi bi-robot me-1 d-lg-none"></i>Lead Gen
