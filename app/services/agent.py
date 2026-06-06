@@ -384,103 +384,14 @@ def run_scout_enrich_job(job_id: int) -> None:
             if not scout:
                 raise RuntimeError(f"ScoutedLocation {scout_id} not found")
 
-            import anthropic  # type: ignore[import-untyped]
-
-            provider = _get_search_provider(db)
-            model = app_settings.get_str(db, "research_model")
-            max_tool_calls = app_settings.get_int(
-                db, "research_max_tool_calls", minimum=1, maximum=50
+            data, total_tokens, log_entries = _run_enrich_research(
+                db,
+                job,
+                system_prompt=_build_scout_enrich_prompt(scout),
+                search_anchor=scout.address or scout.name,
+                opening_msg=f"Research {scout.name} now.",
+                context="scout enrich",
             )
-            system_prompt = _build_scout_enrich_prompt(scout)
-            search_tool = _make_search_tool(scout.address or scout.name)
-
-            client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-            messages: list[dict[str, Any]] = [
-                {"role": "user", "content": f"Research {scout.name} now."}
-            ]
-            log_entries: list[dict[str, Any]] = []
-            tool_call_count = 0
-            total_tokens = 0
-            final_text = ""
-
-            while tool_call_count <= max_tool_calls:
-                raw = client.messages.with_raw_response.create(
-                    model=model,
-                    max_tokens=1536,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system_prompt,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                    tools=[search_tool],
-                    messages=messages,
-                )
-                response = raw.parse()
-                total_tokens += response.usage.input_tokens + response.usage.output_tokens
-                if tool_call_count == 0:
-                    try:
-                        rl = raw.headers.get("anthropic-ratelimit-tokens-remaining")
-                        job.ratelimit_tokens_remaining = int(rl) if rl else None
-                        job.ratelimit_tokens_reset = raw.headers.get(
-                            "anthropic-ratelimit-tokens-reset"
-                        )
-                    except Exception:
-                        logger.debug("Failed to parse rate-limit headers for job %d", job_id)
-
-                messages.append({"role": "assistant", "content": response.content})
-
-                if response.stop_reason == "end_turn":
-                    final_text = "".join(b.text for b in response.content if hasattr(b, "text"))
-                    break
-
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use" and block.name == "web_search":
-                        tool_call_count += 1
-                        query = block.input.get("query", "")
-                        log_entries.append(
-                            {"event": "tool_call", "query": query, "n": tool_call_count}
-                        )
-                        try:
-                            results = web_search.search(query, max_results=3, provider=provider)
-                            result_text = json.dumps(results)
-                        except Exception as search_exc:
-                            result_text = f"Search error: {search_exc}"
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": result_text,
-                            }
-                        )
-                if not tool_results:
-                    final_text = "".join(b.text for b in response.content if hasattr(b, "text"))
-                    break
-                messages.append({"role": "user", "content": tool_results})
-            else:
-                # Hit the search cap — ask for the JSON object from what was found.
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Search limit reached. Output ONLY the single JSON object now, using "
-                            "empty strings for anything still unknown."
-                        ),
-                    }
-                )
-                compile_raw = client.messages.with_raw_response.create(
-                    model=model,
-                    max_tokens=1536,
-                    system=[{"type": "text", "text": system_prompt}],
-                    messages=messages,
-                )
-                compile_resp = compile_raw.parse()
-                total_tokens += compile_resp.usage.input_tokens + compile_resp.usage.output_tokens
-                final_text = "".join(b.text for b in compile_resp.content if hasattr(b, "text"))
-
-            data = _extract_json_object(final_text, context="scout enrich")
 
             scout.ai_summary = (data.get("summary") or "").strip() or None
             scout.ai_employees = (data.get("employees") or "").strip() or None
@@ -508,6 +419,209 @@ def run_scout_enrich_job(job_id: int) -> None:
             job.error_message = str(exc)
             if scout:
                 scout.ai_status = "error"
+
+        job.finished_at = datetime.now()
+        db.commit()
+
+
+def _run_enrich_research(
+    db: Session,
+    job: AgentJob,
+    *,
+    system_prompt: str,
+    search_anchor: str,
+    opening_msg: str,
+    context: str,
+) -> tuple[dict[str, Any], int, list[dict[str, Any]]]:
+    """Shared Claude + web_search deep-dive loop for the single-business research
+    used by both the Scout Map and the sales-pipeline card enrichments.
+
+    Returns ``(parsed_json, total_tokens, log_entries)``. The caller is
+    responsible for checking ``ANTHROPIC_API_KEY`` and mapping the parsed fields
+    onto its entity. Rate-limit headers are captured onto ``job``."""
+    import anthropic  # type: ignore[import-untyped]
+
+    provider = _get_search_provider(db)
+    model = app_settings.get_str(db, "research_model")
+    max_tool_calls = app_settings.get_int(db, "research_max_tool_calls", minimum=1, maximum=50)
+    search_tool = _make_search_tool(search_anchor)
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    messages: list[dict[str, Any]] = [{"role": "user", "content": opening_msg}]
+    log_entries: list[dict[str, Any]] = []
+    tool_call_count = 0
+    total_tokens = 0
+    final_text = ""
+
+    while tool_call_count <= max_tool_calls:
+        raw = client.messages.with_raw_response.create(
+            model=model,
+            max_tokens=1536,
+            system=[
+                {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+            ],
+            tools=[search_tool],
+            messages=messages,
+        )
+        response = raw.parse()
+        total_tokens += response.usage.input_tokens + response.usage.output_tokens
+        if tool_call_count == 0:
+            try:
+                rl = raw.headers.get("anthropic-ratelimit-tokens-remaining")
+                job.ratelimit_tokens_remaining = int(rl) if rl else None
+                job.ratelimit_tokens_reset = raw.headers.get("anthropic-ratelimit-tokens-reset")
+            except Exception:
+                logger.debug("Failed to parse rate-limit headers for job %d", job.id)
+
+        messages.append({"role": "assistant", "content": response.content})
+
+        if response.stop_reason == "end_turn":
+            final_text = "".join(b.text for b in response.content if hasattr(b, "text"))
+            break
+
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "web_search":
+                tool_call_count += 1
+                query = block.input.get("query", "")
+                log_entries.append({"event": "tool_call", "query": query, "n": tool_call_count})
+                try:
+                    results = web_search.search(query, max_results=3, provider=provider)
+                    result_text = json.dumps(results)
+                except Exception as search_exc:
+                    result_text = f"Search error: {search_exc}"
+                tool_results.append(
+                    {"type": "tool_result", "tool_use_id": block.id, "content": result_text}
+                )
+        if not tool_results:
+            final_text = "".join(b.text for b in response.content if hasattr(b, "text"))
+            break
+        messages.append({"role": "user", "content": tool_results})
+    else:
+        # Hit the search cap — ask for the JSON object from what was found.
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Search limit reached. Output ONLY the single JSON object now, using "
+                    "empty strings for anything still unknown."
+                ),
+            }
+        )
+        compile_raw = client.messages.with_raw_response.create(
+            model=model,
+            max_tokens=1536,
+            system=[{"type": "text", "text": system_prompt}],
+            messages=messages,
+        )
+        compile_resp = compile_raw.parse()
+        total_tokens += compile_resp.usage.input_tokens + compile_resp.usage.output_tokens
+        final_text = "".join(b.text for b in compile_resp.content if hasattr(b, "text"))
+
+    data = _extract_json_object(final_text, context=context)
+    return data, total_tokens, log_entries
+
+
+def _build_prospect_enrich_prompt(prospect: Prospect) -> str:
+    """System prompt for the AI deep-dive on one sales-pipeline prospect."""
+    where = ", ".join(p for p in (prospect.address, prospect.city) if p) or "the listed location"
+    return (
+        f"You are a sales-intelligence researcher for {settings.company_blurb}\n\n"
+        f"Research this ONE specific business so a salesperson can decide how to pitch a "
+        f"free smart-cooler / micro-market placement and who to contact:\n"
+        f"  Business name: {prospect.company_name}\n"
+        f"  Address: {where}\n"
+        f"  Venue type: {prospect.venue_type or 'unknown'}\n"
+        f"  Website (if known): {prospect.website or 'unknown'}\n"
+        f"  Known contact (if any): {prospect.contact_name or 'unknown'}\n\n"
+        "Use the web_search tool with targeted queries (the business name plus its city, plus "
+        "terms like 'employees', 'manager', 'careers', 'about', 'contact'). Search several times "
+        "with varied queries. Do not waste searches hunting for an email — they're rarely public; "
+        "only record one if you actually see it.\n\n"
+        "Estimate what you cannot find exactly, and clearly label estimates. For employees and "
+        "foot traffic, a reasonable range/level based on the business type and size is fine.\n\n"
+        "When done, output ONLY a single valid JSON object (no prose before or after) with these "
+        "exact keys (use an empty string if truly unknown):\n"
+        "  summary           - 1-2 sentence description of what the business is/does\n"
+        "  employees         - approximate headcount or range, e.g. '20-50'\n"
+        "  foot_traffic      - one of: low, medium, high\n"
+        "  contact_name      - likely on-site decision-maker (owner / GM / office or property "
+        "manager)\n"
+        "  contact_title     - that person's role\n"
+        "  contact_email     - only if you actually found it\n"
+        "  contact_phone     - main business phone\n"
+        "  website           - official website URL\n"
+        "  has_vending       - short verdict on whether they likely ALREADY have vending / a "
+        "micro market on site, with a brief reason\n"
+    )
+
+
+def run_prospect_enrich_job(job_id: int) -> None:
+    """Background task: AI deep-dive on one sales-pipeline prospect.
+
+    Mirrors ``run_scout_enrich_job`` but writes the structured findings back onto
+    the ``Prospect`` ``ai_*`` columns. Never raises out of the task; failures are
+    recorded on both the job and the prospect row."""
+    with Session(engine) as db:
+        job = db.get(AgentJob, job_id)
+        if not job:
+            return
+
+        params: dict[str, Any] = json.loads(job.input_params or "{}")
+        prospect_id = int(params.get("prospect_id", 0))
+        prospect = db.get(Prospect, prospect_id) if prospect_id else None
+
+        job.status = "running"
+        job.started_at = datetime.now()
+        if prospect:
+            prospect.ai_status = "running"
+        db.commit()
+
+        try:
+            if not settings.anthropic_api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY is not configured in .env")
+            if not prospect:
+                raise RuntimeError(f"Prospect {prospect_id} not found")
+
+            data, total_tokens, log_entries = _run_enrich_research(
+                db,
+                job,
+                system_prompt=_build_prospect_enrich_prompt(prospect),
+                search_anchor=prospect.address or prospect.city or prospect.company_name,
+                opening_msg=f"Research {prospect.company_name} now.",
+                context="prospect enrich",
+            )
+
+            prospect.ai_summary = (data.get("summary") or "").strip() or None
+            prospect.ai_employees = (data.get("employees") or "").strip() or None
+            prospect.ai_foot_traffic = (data.get("foot_traffic") or "").strip().lower() or None
+            prospect.ai_contact_name = (data.get("contact_name") or "").strip() or None
+            prospect.ai_contact_title = (data.get("contact_title") or "").strip() or None
+            prospect.ai_contact_email = (data.get("contact_email") or "").strip() or None
+            prospect.ai_contact_phone = (data.get("contact_phone") or "").strip() or None
+            prospect.ai_has_vending = (data.get("has_vending") or "").strip()[:160] or None
+            # Backfill blank base contact fields from the AI findings.
+            if not prospect.contact_phone and prospect.ai_contact_phone:
+                prospect.contact_phone = prospect.ai_contact_phone
+            if not prospect.contact_email and prospect.ai_contact_email:
+                prospect.contact_email = prospect.ai_contact_email
+            if not prospect.website and (data.get("website") or "").strip():
+                prospect.website = data["website"].strip()[:300]
+            if not prospect.foot_traffic_estimate and prospect.ai_foot_traffic:
+                prospect.foot_traffic_estimate = prospect.ai_foot_traffic
+            prospect.ai_researched_at = datetime.now()
+            prospect.ai_status = "done" if data else "error"
+
+            job.tokens_used = total_tokens
+            job.agent_log = json.dumps(log_entries)[:_MAX_LOG_CHARS]
+            job.status = "done"
+
+        except Exception as exc:
+            logger.exception("Prospect enrich job %d failed", job_id)
+            job.status = "error"
+            job.error_message = str(exc)
+            if prospect:
+                prospect.ai_status = "error"
 
         job.finished_at = datetime.now()
         db.commit()

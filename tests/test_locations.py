@@ -46,13 +46,24 @@ def test_locations_index_shows_locations(client: TestClient, db: Session) -> Non
     assert "Golds Gym" in resp.text
 
 
+def test_locations_index_redirects_to_sales_tab(client: TestClient) -> None:
+    # Locations now live as a tab on the Sales Pipeline page; the old URL is a
+    # permanent shortcut into that tab.
+    resp = client.get("/locations/", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/sales/?tab=locations"
+
+
 def test_locations_status_filter(client: TestClient, db: Session) -> None:
+    # The Locations tab renders every location card (carrying a data-status for
+    # the client-side filter pills) rather than server-side filtering by status.
     _make_location(db, name="Active Spot", status="active")
     _make_location(db, name="Prospect Spot", status="prospect")
-    resp = client.get("/locations/?status=active")
+    resp = client.get("/locations/")  # follows redirect into the sales tab
     assert resp.status_code == 200
     assert "Active Spot" in resp.text
-    assert "Prospect Spot" not in resp.text
+    assert "Prospect Spot" in resp.text
+    assert 'data-status="active"' in resp.text
 
 
 def test_location_detail(client: TestClient, db: Session) -> None:

@@ -1,12 +1,15 @@
+import json
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Form, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.agent import AgentJob
 from app.models.location import Location
 from app.models.sales import OutreachLog, Prospect
+from app.services import agent
 from app.views import templates
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -18,6 +21,7 @@ PIPELINE_STAGES = ["lead", "contacted", "site_visit", "proposal", "signed", "los
 def sales_index(
     request: Request,
     location_id: int | None = None,
+    tab: str = "board",
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     query = db.query(Prospect).order_by(Prospect.next_action_date)
@@ -29,6 +33,14 @@ def sales_index(
         prospects_by_stage[stage].append(prospect)
     locations = db.query(Location).order_by(Location.name).all()
     active_location = db.get(Location, location_id) if location_id else None
+    # Locations tab data: pipeline leads not yet signed/lost (mirrors the old
+    # standalone Locations page that this page now absorbs as a second tab).
+    pipeline_leads = (
+        db.query(Prospect)
+        .filter(Prospect.pipeline_stage.notin_(["signed", "lost"]))
+        .order_by(Prospect.company_name)
+        .all()
+    )
     return templates.TemplateResponse(
         request,
         "sales/index.html",
@@ -38,6 +50,8 @@ def sales_index(
             "stages": PIPELINE_STAGES,
             "locations": locations,
             "active_location": active_location,
+            "pipeline_leads": pipeline_leads,
+            "active_tab": "locations" if tab == "locations" else "board",
         },
     )
 
@@ -74,6 +88,48 @@ def prospect_card_modal(
         request,
         "sales/_prospect_modal.html",
         {"prospect": prospect},
+    )
+
+
+@router.post("/{prospect_id}/enrich", response_class=HTMLResponse)
+def prospect_enrich(
+    prospect_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Kick off the AI deep-dive for one prospect (same engine as the Scout Map).
+    Returns the polling panel that streams status until the job finishes."""
+    prospect = db.get(Prospect, prospect_id)
+    if not prospect:
+        return Response(status_code=404)
+    # Don't start a second job if one is already running for this prospect.
+    if prospect.ai_status not in ("pending", "running"):
+        job = AgentJob(
+            job_type="prospect_enrich",
+            status="pending",
+            input_params=json.dumps({"prospect_id": prospect.id}),
+        )
+        db.add(job)
+        db.commit()
+        prospect.ai_status = "pending"
+        prospect.ai_job_id = job.id
+        db.commit()
+        background_tasks.add_task(agent.run_prospect_enrich_job, job.id)
+    return templates.TemplateResponse(
+        request, "sales/_prospect_enrich.html", {"prospect": prospect}
+    )
+
+
+@router.get("/{prospect_id}/enrich/poll", response_class=HTMLResponse)
+def prospect_enrich_poll(
+    prospect_id: int, request: Request, db: Session = Depends(get_db)
+) -> HTMLResponse:
+    prospect = db.get(Prospect, prospect_id)
+    if not prospect:
+        return Response(status_code=404)
+    return templates.TemplateResponse(
+        request, "sales/_prospect_enrich.html", {"prospect": prospect}
     )
 
 

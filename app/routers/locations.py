@@ -9,39 +9,11 @@ from app.views import templates
 router = APIRouter(prefix="/locations", tags=["locations"])
 
 
-@router.get("/", response_class=HTMLResponse)
-def locations_index(
-    request: Request,
-    status: str | None = None,
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    from app.models.sales import Prospect
-
-    query = db.query(Location)
-    if status:
-        query = query.filter(Location.status == status)
-    locations = query.order_by(Location.name).all()
-
-    # Show pipeline leads unless filtering by a location-specific status
-    pipeline_leads: list[Prospect] = []
-    if not status or status in ("prospect", ""):
-        pipeline_leads = (
-            db.query(Prospect)
-            .filter(Prospect.pipeline_stage.notin_(["signed", "lost"]))
-            .order_by(Prospect.company_name)
-            .all()
-        )
-
-    return templates.TemplateResponse(
-        request,
-        "locations/index.html",
-        {
-            "active_nav": "locations",
-            "locations": locations,
-            "status_filter": status,
-            "pipeline_leads": pipeline_leads,
-        },
-    )
+@router.get("/")
+def locations_index() -> RedirectResponse:
+    # Locations now live as a tab on the Sales Pipeline page; keep this URL as a
+    # permanent shortcut into that tab so old links/bookmarks still work.
+    return RedirectResponse(url="/sales/?tab=locations", status_code=307)
 
 
 @router.get("/map-data")
@@ -132,7 +104,7 @@ def location_create(
     )
     db.add(location)
     db.commit()
-    return RedirectResponse(url="/locations/", status_code=303)
+    return RedirectResponse(url="/sales/?tab=locations", status_code=303)
 
 
 @router.get("/{location_id}", response_class=HTMLResponse)
@@ -262,4 +234,4 @@ def location_delete(location_id: int, db: Session = Depends(get_db)) -> HTMLResp
     if location:
         db.delete(location)
         db.commit()
-    return RedirectResponse(url="/locations/", status_code=303)
+    return RedirectResponse(url="/sales/?tab=locations", status_code=303)

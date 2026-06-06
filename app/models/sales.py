@@ -42,10 +42,26 @@ class Prospect(Base):
     template_draft_subject: Mapped[str | None] = mapped_column(String(300), nullable=True)
     template_draft_body: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # AI deep-dive (filled by agent.run_prospect_enrich_job, mirrors ScoutedLocation).
+    # ai_status: none | pending | running | done | error.
+    ai_status: Mapped[str] = mapped_column(String(20), default="none")
+    ai_job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_employees: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    ai_foot_traffic: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ai_contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    ai_contact_title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ai_contact_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_contact_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ai_has_vending: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    ai_researched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True)
     location: Mapped[Location | None] = relationship(back_populates="prospects")
     outreach_logs: Mapped[list[OutreachLog]] = relationship(
-        back_populates="prospect", order_by="OutreachLog.contacted_at.desc()"
+        back_populates="prospect",
+        order_by="OutreachLog.contacted_at.desc()",
+        cascade="all, delete-orphan",
     )
 
 

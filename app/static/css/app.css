@@ -13,6 +13,23 @@ code, pre, kbd, .font-monospace {
   font-family: 'IBM Plex Mono', 'Courier New', monospace;
 }
 
+/* ---- Page titles ----------------------------------------- */
+/* The per-page <h1> page name (mostly `h1.h3`, 1.75rem) renders
+   too large at 100% browser zoom — it only looked balanced when
+   the operator zoomed to ~80%. Tighten just the top-level page
+   heading so 100% reads cleanly. Body text, cards, and forms are
+   intentionally left untouched. The class-qualified selectors
+   exist to out-specify Bootstrap's `.h1`–`.h4` helpers. */
+main h1,
+main h1.h1,
+main h1.h2,
+main h1.h3,
+main h1.h4 {
+  font-size: 1.4rem;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+
 /* ---- Theme transition ------------------------------------ */
 *,
 *::before,

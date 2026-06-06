@@ -1,0 +1,63 @@
+<div id="prospect-ai-{{ prospect.id }}"
+     {% if prospect.ai_status in ('pending', 'running') %}
+     hx-get="/sales/{{ prospect.id }}/enrich/poll"
+     hx-trigger="load delay:2s"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+  {% if prospect.ai_status in ('pending', 'running') %}
+  <div class="d-flex align-items-center gap-2 text-primary small">
+    <span class="spinner-border spinner-border-sm" role="status"></span>
+    <span>Researching {{ prospect.company_name }}… this usually takes 20–40 seconds.</span>
+  </div>
+
+  {% elif prospect.ai_status == 'error' %}
+  <div class="alert alert-warning py-2 px-3 small mb-2">
+    <i class="bi bi-exclamation-triangle me-1"></i>AI research didn't complete (search or model error).
+  </div>
+  <button class="btn btn-sm btn-outline-primary"
+          hx-post="/sales/{{ prospect.id }}/enrich"
+          hx-target="#prospect-ai-{{ prospect.id }}"
+          hx-swap="outerHTML">
+    <i class="bi bi-arrow-clockwise me-1"></i>Retry
+  </button>
+
+  {% elif prospect.ai_status == 'done' %}
+  <div class="small">
+    <div class="fw-semibold text-primary mb-1"><i class="bi bi-robot me-1"></i>AI deep-dive</div>
+    {% if prospect.ai_summary %}<p class="mb-2">{{ prospect.ai_summary }}</p>{% endif %}
+    <ul class="list-unstyled mb-2">
+      {% if prospect.ai_employees %}<li><i class="bi bi-people me-1 text-muted"></i>Est. employees: {{ prospect.ai_employees }}</li>{% endif %}
+      {% if prospect.ai_foot_traffic %}<li><i class="bi bi-graph-up me-1 text-muted"></i>Foot traffic: {{ prospect.ai_foot_traffic | title }}</li>{% endif %}
+      {% if prospect.ai_contact_name %}<li><i class="bi bi-person-badge me-1 text-muted"></i>{{ prospect.ai_contact_name }}{% if prospect.ai_contact_title %}, {{ prospect.ai_contact_title }}{% endif %}</li>{% endif %}
+      {% if prospect.ai_contact_email %}<li><i class="bi bi-envelope me-1 text-muted"></i>{{ prospect.ai_contact_email }}</li>{% endif %}
+      {% if prospect.ai_contact_phone %}<li><i class="bi bi-telephone me-1 text-muted"></i>{{ prospect.ai_contact_phone }}</li>{% endif %}
+      {% if prospect.ai_has_vending %}<li><i class="bi bi-cup-straw me-1 text-muted"></i>Vending: {{ prospect.ai_has_vending }}</li>{% endif %}
+    </ul>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="text-muted" style="font-size:.75rem">
+        <i class="bi bi-info-circle me-1"></i>AI estimates — verify before outreach.
+        {% if prospect.ai_researched_at %}Researched {{ prospect.ai_researched_at.strftime('%b %d') }}.{% endif %}
+      </span>
+      <button class="btn btn-sm btn-link p-0" style="font-size:.75rem"
+              hx-post="/sales/{{ prospect.id }}/enrich"
+              hx-target="#prospect-ai-{{ prospect.id }}"
+              hx-swap="outerHTML"
+              hx-confirm="Re-run the AI research for {{ prospect.company_name }}?">
+        <i class="bi bi-arrow-clockwise me-1"></i>Re-run
+      </button>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="small text-muted mb-2">
+    Pull employees, foot-traffic, likely decision-maker, and a vending read with AI web research.
+  </div>
+  <button class="btn btn-sm btn-outline-primary"
+          hx-post="/sales/{{ prospect.id }}/enrich"
+          hx-target="#prospect-ai-{{ prospect.id }}"
+          hx-swap="outerHTML">
+    <i class="bi bi-robot me-1"></i>Research this business (AI)
+  </button>
+  {% endif %}
+</div>

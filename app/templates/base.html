@@ -58,12 +58,7 @@
           </a>
         </li>
         <li class="nav-item">
-          <a class="nav-link {% if active_nav == 'locations' %}active{% endif %}" href="/locations/">
-            <i class="bi bi-geo-alt me-1 d-lg-none"></i>Locations
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link {% if active_nav == 'sales' %}active{% endif %}" href="/sales/">
+          <a class="nav-link {% if active_nav in ['sales', 'locations'] %}active{% endif %}" href="/sales/">
             <i class="bi bi-funnel me-1 d-lg-none"></i>Sales Pipeline
           </a>
         </li>
