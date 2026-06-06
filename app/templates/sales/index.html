@@ -104,9 +104,15 @@
                   {{ p.company_name }}
                 </button>
                 <div class="d-flex flex-wrap align-items-center gap-1 mb-1">
-                  {% if p.tier %}<span class="badge bg-secondary" style="font-size:0.75rem">T{{ p.tier }}</span>{% endif %}
+                  {% if src_cat == 'leadgen' %}
+                  <span class="text-primary" style="font-size:0.8rem" title="Found by the Lead Gen agent"><i class="bi bi-robot"></i></span>
+                  {% elif src_cat == 'chatbot' %}
+                  <span class="text-success" style="font-size:0.8rem" title="Found by the chatbot"><i class="bi bi-chat-dots-fill"></i></span>
+                  {% else %}
+                  <span class="text-secondary" style="font-size:0.8rem" title="Manually added"><i class="bi bi-hand-index-thumb"></i></span>
+                  {% endif %}
                   {% if p.venue_type %}<span class="text-muted" style="font-size:0.75rem">{{ p.venue_type }}</span>{% endif %}
-                  {% if p.ai_status == 'done' %}<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle" style="font-size:0.7rem" title="AI deep-dive complete"><i class="bi bi-robot"></i></span>{% endif %}
+                  {% if p.ai_status == 'done' %}<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle" style="font-size:0.7rem" title="AI deep-dive complete"><i class="bi bi-check-circle"></i> AI</span>{% endif %}
                 </div>
                 {% if p.next_action_date %}
                 <div class="text-muted mb-1" style="font-size:0.75rem">
@@ -264,6 +270,12 @@
           </div>
           <div class="card-footer bg-transparent py-1">
             <a href="/sales/{{ p.id }}" class="btn btn-sm btn-outline-secondary py-0">View Lead</a>
+            {% if p.address or p.city %}
+            <a href="https://www.google.com/maps/search/?api=1&query={{ (p.company_name ~ ' ' ~ (p.address or '') ~ ' ' ~ (p.city or '') ~ ' ' ~ (p.state or '')) | trim | urlencode }}"
+               target="_blank" rel="noopener" class="btn btn-sm btn-outline-success py-0 ms-1" title="Open in Google Maps">
+              <i class="bi bi-geo-alt me-1"></i>Maps
+            </a>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -300,7 +312,7 @@
         <h5 class="modal-title"><span id="prospect-info-title">Prospect Details</span></h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body" id="prospect-info-body">
+      <div class="modal-body" id="prospect-info-body" style="max-height:75vh;overflow-y:auto">
         <div class="text-center py-4">
           <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
         </div>
@@ -365,13 +377,21 @@
     return marker;
   }
 
+  function mapsLink(item, label) {
+    var q = encodeURIComponent(((item.name || '') + ' ' + (item.address || '')).trim());
+    return '<a href="https://www.google.com/maps/search/?api=1&query=' + q +
+           '" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success py-0 mt-1 ms-1" ' +
+           'style="font-size:0.75rem"><i class="bi bi-geo-alt me-1"></i>Maps</a>';
+  }
+
   function locPopup(item) {
     var stage = item.status ? item.status.replace(/_/g, ' ') : '';
     var vt = item.venue_type ? '<br><small class="text-muted">' + item.venue_type + '</small>' : '';
     var cn = item.contact_name ? '<br><small><i class="bi bi-person me-1"></i>' + item.contact_name + '</small>' : '';
     return '<strong><a href="' + item.url + '">' + item.name + '</a></strong>' +
            '<br><small class="text-muted">' + stage + '</small>' + vt + cn +
-           '<br><a href="' + item.url + '" class="btn btn-sm btn-outline-secondary py-0 mt-1" style="font-size:0.75rem">View</a>';
+           '<br><a href="' + item.url + '" class="btn btn-sm btn-outline-secondary py-0 mt-1" style="font-size:0.75rem">View</a>' +
+           mapsLink(item);
   }
 
   function leadPopup(item) {
@@ -380,7 +400,8 @@
     var cn = item.contact_name ? '<br><small><i class="bi bi-person me-1"></i>' + item.contact_name + '</small>' : '';
     return '<strong><a href="' + item.url + '">' + item.name + '</a></strong>' +
            '<br><small class="text-muted">Lead &mdash; ' + stage + '</small>' + vt + cn +
-           '<br><a href="' + item.url + '" class="btn btn-sm btn-outline-secondary py-0 mt-1" style="font-size:0.75rem">View Lead</a>';
+           '<br><a href="' + item.url + '" class="btn btn-sm btn-outline-secondary py-0 mt-1" style="font-size:0.75rem">View Lead</a>' +
+           mapsLink(item);
   }
 
   async function addItems(items, isLead) {

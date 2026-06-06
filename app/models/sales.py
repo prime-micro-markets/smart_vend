@@ -25,6 +25,7 @@ class Prospect(Base):
     venue_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     address: Mapped[str | None] = mapped_column(String(300), nullable=True)
     city: Mapped[str] = mapped_column(String(100), default="Panama City")
+    state: Mapped[str | None] = mapped_column(String(2), nullable=True)
     pipeline_stage: Mapped[str] = mapped_column(String(30), default="lead")
     tier: Mapped[str | None] = mapped_column(String(5), nullable=True)
     foot_traffic_estimate: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -53,7 +54,7 @@ class Prospect(Base):
     ai_contact_title: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_contact_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     ai_contact_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    ai_has_vending: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    ai_has_vending: Mapped[str | None] = mapped_column(String(400), nullable=True)
     ai_researched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True)

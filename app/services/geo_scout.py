@@ -289,6 +289,58 @@ def _score(
     return max(0, min(100, round(composite))), tags
 
 
+# ── Tier rating (shared with the sales pipeline) ─────────────────────────────
+# The Scout Map's 0-100 opportunity score maps to the A/B/C tier used on prospect
+# contact cards, so a manually-added or scouted prospect gets the same rating
+# language. Used by leads.py (promote) and agent.py (AI research on a prospect).
+_TIER_BANDS = ((70, "A"), (45, "B"), (0, "C"))
+
+# Venue-type "fit" weights for prospects, mirroring SCOUT_VENUES. Prospect
+# venue_type values come from the add-prospect form's dropdown.
+_PROSPECT_VENUE_FIT = {
+    "gym": 90,
+    "office": 85,
+    "hospital": 85,
+    "military": 85,
+    "hotel": 80,
+    "retail": 65,
+    "other": 50,
+}
+_FOOT_TRAFFIC_FIT = {"high": 100, "medium": 60, "low": 30}
+
+
+def score_to_tier(score: int | None) -> str | None:
+    """Map a 0-100 opportunity score to an A/B/C tier (None if no score)."""
+    if score is None:
+        return None
+    for threshold, tier in _TIER_BANDS:
+        if score >= threshold:
+            return tier
+    return "C"
+
+
+def score_prospect(
+    venue_type: str | None, foot_traffic: str | None, has_vending: bool = False
+) -> int | None:
+    """Score a sales-pipeline prospect 0-100 using the Scout Map's weighting.
+
+    Reuses the same blend as ``_score`` (venue fit + size/foot-traffic, halved
+    when vending is already on site), substituting the AI-derived foot-traffic
+    level for the map's food-desert signal. Returns ``None`` when there's nothing
+    to score on, so the caller can leave the tier untouched.
+    """
+    fit = _PROSPECT_VENUE_FIT.get((venue_type or "").strip().lower())
+    traffic = _FOOT_TRAFFIC_FIT.get((foot_traffic or "").strip().lower())
+    if fit is None and traffic is None:
+        return None
+    # Average whichever signals we have, mirroring _score's 50/50 blend.
+    parts = [v for v in (fit, traffic) if v is not None]
+    composite = sum(parts) / len(parts)
+    if has_vending:
+        composite *= 0.5
+    return max(0, min(100, round(composite)))
+
+
 # ── Public entry point ──────────────────────────────────────────────────────
 def scout(
     *,

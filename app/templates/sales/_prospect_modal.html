@@ -3,11 +3,18 @@
 {% set stage_colors = {'lead': 'secondary', 'contacted': 'info', 'site_visit': 'primary', 'proposal': 'warning', 'signed': 'success', 'lost': 'danger'} %}
 {% set color = stage_colors.get(prospect.pipeline_stage, 'secondary') %}
 
+{% set maps_query = (prospect.company_name ~ ' ' ~ (prospect.address or '') ~ ' ' ~ (prospect.city or '') ~ ' ' ~ (prospect.state or '')) | trim %}
 <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
   <span class="badge bg-{{ color }}">{{ prospect.pipeline_stage | replace("_", " ") | title }}</span>
-  {% if prospect.tier %}<span class="badge bg-dark">Tier {{ prospect.tier }}</span>{% endif %}
   {% if prospect.venue_type %}<span class="badge bg-light text-dark border">{{ prospect.venue_type }}</span>{% endif %}
   {% if prospect.estimated_machines %}<span class="text-muted small"><i class="bi bi-box me-1"></i>{{ prospect.estimated_machines }} machine(s)</span>{% endif %}
+  {% if prospect.address or prospect.city %}
+  <a href="https://www.google.com/maps/search/?api=1&query={{ maps_query | urlencode }}"
+     target="_blank" rel="noopener" class="btn btn-sm btn-outline-success py-0 ms-auto"
+     title="Launch Google Maps to this location">
+    <i class="bi bi-geo-alt me-1"></i>Maps
+  </a>
+  {% endif %}
 </div>
 
 <div class="row g-3">
@@ -46,8 +53,8 @@
       {% if prospect.address %}
       <li class="mb-1"><i class="bi bi-geo-alt-fill text-muted me-2"></i><a href="{{ loc_link }}" class="text-decoration-none">{{ prospect.address }}</a></li>
       {% endif %}
-      {% if prospect.city %}
-      <li class="mb-1"><i class="bi bi-pin-map-fill text-muted me-2"></i><a href="{{ loc_link }}" class="text-decoration-none">{{ prospect.city }}</a></li>
+      {% if prospect.city or prospect.state %}
+      <li class="mb-1"><i class="bi bi-pin-map-fill text-muted me-2"></i><a href="{{ loc_link }}" class="text-decoration-none">{{ prospect.city }}{% if prospect.city and prospect.state %}, {% endif %}{{ prospect.state or '' }}</a></li>
       {% endif %}
       {% if prospect.website %}
       <li class="mb-1"><i class="bi bi-globe text-muted me-2"></i><a href="{{ prospect.website }}" target="_blank">{{ prospect.website }}</a></li>
@@ -55,7 +62,7 @@
       {% if prospect.foot_traffic_estimate %}
       <li class="mb-1"><i class="bi bi-people-fill text-muted me-2"></i>Traffic: {{ prospect.foot_traffic_estimate }}</li>
       {% endif %}
-      {% if not prospect.address and not prospect.city and not prospect.website and not prospect.foot_traffic_estimate %}
+      {% if not prospect.address and not prospect.city and not prospect.state and not prospect.website and not prospect.foot_traffic_estimate %}
       <li class="text-muted fst-italic">No location info on file</li>
       {% endif %}
     </ul>
@@ -75,7 +82,7 @@
 <hr class="my-3">
 <div class="small">
   <h6 class="text-muted text-uppercase small fw-semibold mb-1">Notes</h6>
-  <p class="mb-0">{{ prospect.notes }}</p>
+  <p class="mb-0" style="white-space:pre-wrap;word-break:break-word">{{ prospect.notes }}</p>
 </div>
 {% endif %}
 
