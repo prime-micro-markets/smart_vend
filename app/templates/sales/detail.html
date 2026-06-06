@@ -24,7 +24,10 @@
           <dt class="col-5">Venue</dt>
           <dd class="col-7">{{ prospect.venue_type | title if prospect.venue_type else "-" }}</dd>
           <dt class="col-5">City</dt>
-          <dd class="col-7">{{ prospect.city }}</dd>
+          <dd class="col-7">
+            {% set loc_link = ('/locations/' ~ prospect.location_id) if prospect.location_id else '/sales/?tab=locations' %}
+            <a href="{{ loc_link }}" class="text-decoration-none">{{ prospect.city }}<i class="bi bi-box-arrow-up-right ms-1" style="font-size:.7rem"></i></a>
+          </dd>
           <dt class="col-5">Source</dt>
           <dd class="col-7">{{ prospect.source or "-" }}</dd>
           <dt class="col-5">Machines</dt>

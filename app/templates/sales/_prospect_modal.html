@@ -35,13 +35,19 @@
     </ul>
   </div>
   <div class="col-md-6">
-    <h6 class="text-muted text-uppercase small fw-semibold mb-2">Location</h6>
+    {% set loc_link = ('/locations/' ~ prospect.location_id) if prospect.location_id else '/sales/?tab=locations' %}
+    <h6 class="text-muted text-uppercase small fw-semibold mb-2">
+      Location
+      <a href="{{ loc_link }}" class="ms-1 text-decoration-none" title="View in Locations tab">
+        <i class="bi bi-box-arrow-up-right" style="font-size:.7rem"></i>
+      </a>
+    </h6>
     <ul class="list-unstyled mb-0 small">
       {% if prospect.address %}
-      <li class="mb-1"><i class="bi bi-geo-alt-fill text-muted me-2"></i>{{ prospect.address }}</li>
+      <li class="mb-1"><i class="bi bi-geo-alt-fill text-muted me-2"></i><a href="{{ loc_link }}" class="text-decoration-none">{{ prospect.address }}</a></li>
       {% endif %}
       {% if prospect.city %}
-      <li class="mb-1"><i class="bi bi-pin-map-fill text-muted me-2"></i>{{ prospect.city }}</li>
+      <li class="mb-1"><i class="bi bi-pin-map-fill text-muted me-2"></i><a href="{{ loc_link }}" class="text-decoration-none">{{ prospect.city }}</a></li>
       {% endif %}
       {% if prospect.website %}
       <li class="mb-1"><i class="bi bi-globe text-muted me-2"></i><a href="{{ prospect.website }}" target="_blank">{{ prospect.website }}</a></li>

@@ -224,11 +224,26 @@ main h1.h4 {
 }
 
 /* Employee portal brand */
-.pmm-brand      { font-size: 1.3rem; }
+.pmm-brand      { font-size: 1.1rem; }
 .pmm-brand-logo { height: 38px; }
 
 @media (max-width: 991.98px) {
   .pmm-brand-logo { height: 36px; }
+}
+
+/* Desktop navbar density: at 100% browser zoom the default 1rem nav links are
+   wide enough that the two-word items ("Research Tasks", "Financial Models",
+   "Customer Service") wrap onto a second line and the bar looks cramped — only
+   ~70% zoom showed every item on one clean row. Shrink the font + horizontal
+   padding and keep each label on a single line so the whole bar fits at 100%. */
+@media (min-width: 992px) {
+  .navbar .nav-link {
+    white-space: nowrap;
+    font-size: 0.85rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  .navbar .dropdown-toggle { white-space: nowrap; }
 }
 
 /* ============================================================
