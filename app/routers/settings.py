@@ -1,8 +1,9 @@
-"""Settings dashboard — AI model/limits, search provider, and vendor config.
+"""Settings dashboard — AI model/limits and search provider.
 
-All values persist in the AppSetting key-value table so they can change at
+Tunables persist in the AppSetting key-value table so they can change at
 runtime without a code deploy. API keys (Anthropic/Tavily/Firecrawl) come
-from .env and are shown read-only as a configured/not-configured status.
+from .env and are shown read-only as a configured/not-configured status, with
+an API-usage panel that reuses the lead-gen token-consumption fragment.
 """
 
 from __future__ import annotations
@@ -16,11 +17,6 @@ from sqlalchemy.orm import Session
 from app.config import settings as env_settings
 from app.database import get_db
 from app.services import app_settings
-from app.services.price_comparator import (
-    VENDOR_KEYS,
-    _setting_keys,
-    load_vendor_settings,
-)
 from app.views import templates
 
 logger = logging.getLogger(__name__)
@@ -51,11 +47,6 @@ def _set_setting(db: Session, key: str, value: str) -> None:
         db.add(AppSetting(key=key, value=value))
 
 
-def _vendor_field_layout() -> dict[str, dict[str, str]]:
-    """Per-vendor {field: setting_key} map, for rendering the vendor form."""
-    return {vk: _setting_keys(vk) for vk in VENDOR_KEYS}
-
-
 @router.get("/", response_class=HTMLResponse)
 def settings_index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     ai_values = {key: app_settings.get_str(db, key) for key, _, _, _ in _AI_FIELDS}
@@ -74,8 +65,6 @@ def settings_index(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
             "ai_defaults": app_settings.DEFAULTS,
             "search_provider": app_settings.get_str(db, "search_provider") or "duckduckgo",
             "search_providers": _SEARCH_PROVIDERS,
-            "vendor_layout": _vendor_field_layout(),
-            "vendor_values": load_vendor_settings(db),
             "api_status": api_status,
             "saved": request.query_params.get("saved") == "1",
         },
@@ -103,12 +92,6 @@ async def settings_save(request: Request, db: Session = Depends(get_db)) -> Redi
     provider = str(form.get("search_provider", "")).strip()
     if provider in _SEARCH_PROVIDERS:
         _set_setting(db, "search_provider", provider)
-
-    # Vendor config — every setting_key across all vendors
-    for keys in _vendor_field_layout().values():
-        for setting_key in keys.values():
-            if setting_key in form:
-                _set_setting(db, setting_key, str(form.get(setting_key, "")).strip())
 
     try:
         db.commit()

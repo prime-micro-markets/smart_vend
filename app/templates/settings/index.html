@@ -52,7 +52,7 @@
       </div>
 
       <!-- API Key Status -->
-      <div class="card">
+      <div class="card mb-4">
         <div class="card-header fw-semibold"><i class="bi bi-key me-1"></i>API Keys (from .env)</div>
         <ul class="list-group list-group-flush small">
           {% for name, configured in api_status.items() %}
@@ -67,29 +67,13 @@
           {% endfor %}
         </ul>
       </div>
-    </div>
 
-    <!-- Vendor Config -->
-    <div class="col-12">
+      <!-- API Usage / Token Consumption -->
       <div class="card">
-        <div class="card-header fw-semibold"><i class="bi bi-shop me-1"></i>Price Comparison — Vendor Config</div>
-        <div class="card-body">
-          <div class="row g-3">
-            {% for vk, fields in vendor_layout.items() %}
-            <div class="col-md-4">
-              <div class="border rounded p-3 h-100">
-                <div class="fw-semibold small mb-2">{{ vk.replace('_', ' ')|title }}</div>
-                {% for field, setting_key in fields.items() %}
-                <div class="mb-2">
-                  <label class="form-label small mb-1" for="{{ setting_key }}">{{ field.replace('_', ' ')|title }}</label>
-                  <input type="text" class="form-control form-control-sm" id="{{ setting_key }}"
-                         name="{{ setting_key }}" value="{{ vendor_values[vk][field] }}">
-                </div>
-                {% endfor %}
-              </div>
-            </div>
-            {% endfor %}
-          </div>
+        <div class="card-header fw-semibold"><i class="bi bi-lightning-charge me-1"></i>API Usage</div>
+        <div class="card-body" id="usage-bar"
+             hx-get="/leads/usage" hx-trigger="load" hx-swap="innerHTML">
+          <span class="text-muted small">Loading usage stats…</span>
         </div>
       </div>
     </div>
