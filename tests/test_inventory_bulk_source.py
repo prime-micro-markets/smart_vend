@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,12 @@ from app.models.agent import AgentJob
 from app.models.inventory import Product, ProductSource, Supplier
 from app.models.settings import AppSetting
 from app.routers.inventory import _auto_save_best_for_product
+
+# Product Inventory was shelved 2026-06-05 (router intentionally kept but no
+# longer mounted in app.main, so the bulk-source / refresh-prices endpoints
+# 404). Skipped in lockstep with that shelving; reactivates when the router is
+# re-mounted. See docs/inventory_overhaul_plan.md.
+pytestmark = pytest.mark.skip(reason="Product Inventory shelved 2026-06-05 (router unmounted)")
 
 
 def _mk_product(db: Session, sku: str, name: str, **kwargs) -> Product:

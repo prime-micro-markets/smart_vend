@@ -43,14 +43,9 @@
   <td class="small text-muted">{{ task.due_date_raw or "—" }}</td>
   <td class="text-end" onclick="event.stopPropagation()">
     {# Task-specific deep links into other modules. Keep this small; if it grows,
-       move to a per-task `deep_link` field on ResearchTask. #}
-    {% if task.task_number == "7.2" %}
-    <a href="/inventory/?tab=suppliers"
-       class="btn btn-sm btn-outline-primary py-0 px-1 me-1"
-       title="Open the priority suppliers banner in Inventory">
-      <i class="bi bi-building"></i>
-    </a>
-    {% endif %}
+       move to a per-task `deep_link` field on ResearchTask. The 7.2 → Inventory
+       suppliers link was removed 2026-06-05 when Product Inventory was shelved
+       (router unmounted); restore it when the page is rebuilt on Nayax. #}
     <button class="btn btn-sm btn-outline-secondary py-0 px-1 me-1"
             hx-get="/research/{{ task.id }}/edit"
             hx-target="#task-modal-body"

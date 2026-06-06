@@ -4,6 +4,14 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import InventoryLog, Product, ProductSource, Supplier
 
+# Product Inventory was shelved 2026-06-05 (its programmatic best-price cost
+# sourcing is unreachable until Nayax is live): the router is intentionally kept
+# but no longer mounted in app.main, so every endpoint here 404s. These tests
+# are skipped in lockstep with that shelving and reactivate the moment the
+# router is re-mounted. See docs/inventory_overhaul_plan.md and the comment on
+# the commented-out include_router(inventory.router) line in app/main.py.
+pytestmark = pytest.mark.skip(reason="Product Inventory shelved 2026-06-05 (router unmounted)")
+
 
 def _make_supplier(db: Session, **kwargs) -> Supplier:
     defaults = {"name": "Sysco Foods"}
