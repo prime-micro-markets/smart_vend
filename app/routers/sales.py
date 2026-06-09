@@ -1,8 +1,9 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -15,18 +16,51 @@ from app.views import templates
 router = APIRouter(prefix="/sales", tags=["sales"])
 
 PIPELINE_STAGES = ["lead", "contacted", "site_visit", "proposal", "signed", "lost"]
+_CONTACTED_IDX = PIPELINE_STAGES.index("contacted")
+
+
+def _ensure_contacted_stamp(prospect: Prospect) -> None:
+    """Stamp the first-contact date when a prospect reaches the Contacted stage (or
+    beyond) without one — e.g. the proposal was mailed outside the app. Never
+    overwrites an existing date, and never fires for a direct jump to ``lost``."""
+    if prospect.contacted_at is not None:
+        return
+    if prospect.pipeline_stage == "lost" or prospect.pipeline_stage not in PIPELINE_STAGES:
+        return
+    if PIPELINE_STAGES.index(prospect.pipeline_stage) >= _CONTACTED_IDX:
+        prospect.contacted_at = datetime.now()
 
 
 @router.get("/", response_class=HTMLResponse)
 def sales_index(
     request: Request,
     location_id: int | None = None,
+    contacted_from: str | None = None,
+    contacted_to: str | None = None,
     tab: str = "board",
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     query = db.query(Prospect).order_by(Prospect.next_action_date)
     if location_id:
         query = query.filter(Prospect.location_id == location_id)
+    # Contacted-date filter: narrow only cards that have a contacted date to the
+    # chosen window; un-contacted leads (NULL) always pass so the Lead column is
+    # left untouched. Bad/blank dates are ignored (degrade to no filter).
+    bounds = []
+    try:
+        if contacted_from:
+            start = datetime.combine(date.fromisoformat(contacted_from), time.min)
+            bounds.append(Prospect.contacted_at >= start)
+    except ValueError:
+        contacted_from = None
+    try:
+        if contacted_to:
+            end = datetime.combine(date.fromisoformat(contacted_to), time.max)
+            bounds.append(Prospect.contacted_at <= end)
+    except ValueError:
+        contacted_to = None
+    if bounds:
+        query = query.filter(or_(Prospect.contacted_at.is_(None), and_(*bounds)))
     prospects_by_stage: dict[str, list[Prospect]] = {s: [] for s in PIPELINE_STAGES}
     for prospect in query.all():
         stage = prospect.pipeline_stage if prospect.pipeline_stage in prospects_by_stage else "lead"
@@ -50,6 +84,8 @@ def sales_index(
             "stages": PIPELINE_STAGES,
             "locations": locations,
             "active_location": active_location,
+            "contacted_from": contacted_from or "",
+            "contacted_to": contacted_to or "",
             "pipeline_leads": pipeline_leads,
             "active_tab": "locations" if tab == "locations" else "board",
         },
@@ -274,6 +310,7 @@ def prospect_advance_stage(prospect_id: int, db: Session = Depends(get_db)) -> H
     )
     if idx < len(PIPELINE_STAGES) - 1:
         prospect.pipeline_stage = PIPELINE_STAGES[idx + 1]
+        _ensure_contacted_stamp(prospect)
         db.commit()
     return RedirectResponse(url="/sales/", status_code=303)
 

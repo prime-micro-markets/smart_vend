@@ -43,6 +43,20 @@
           <option value="chatbot">Chatbot</option>
           <option value="leadgen">Lead gen agent</option>
         </select>
+        <form method="get" action="/sales/" class="d-flex align-items-center gap-1"
+              title="Filter contacted cards by the date the proposal was sent">
+          {% if active_location %}<input type="hidden" name="location_id" value="{{ active_location.id }}">{% endif %}
+          <label class="small text-muted mb-0 ms-1">Contacted</label>
+          <input type="date" name="contacted_from" value="{{ contacted_from }}"
+                 class="form-control form-control-sm" style="width:auto" title="From">
+          <input type="date" name="contacted_to" value="{{ contacted_to }}"
+                 class="form-control form-control-sm" style="width:auto" title="To">
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Apply</button>
+          {% if contacted_from or contacted_to %}
+          <a href="/sales/{% if active_location %}?location_id={{ active_location.id }}{% endif %}"
+             class="btn btn-sm btn-link text-muted px-1">Clear</a>
+          {% endif %}
+        </form>
         {% if active_location %}
         <span class="badge bg-primary">{{ active_location.name }}</span>
         {% endif %}
@@ -114,6 +128,11 @@
                   {% if p.venue_type %}<span class="text-muted" style="font-size:0.75rem">{{ p.venue_type }}</span>{% endif %}
                   {% if p.ai_status == 'done' %}<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle" style="font-size:0.7rem" title="AI deep-dive complete"><i class="bi bi-check-circle"></i> AI</span>{% endif %}
                 </div>
+                {% if p.contacted_at %}
+                <div class="text-success mb-1" style="font-size:0.75rem" title="Proposal emailed / contacted">
+                  <i class="bi bi-send-check me-1"></i>Contacted {{ p.contacted_at.strftime('%b %d') }}
+                </div>
+                {% endif %}
                 {% if p.next_action_date %}
                 <div class="text-muted mb-1" style="font-size:0.75rem">
                   <i class="bi bi-calendar me-1"></i>{{ p.next_action_date }}

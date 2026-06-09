@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -101,3 +103,60 @@ def test_prospect_card_modal_shows_outreach_section(client: TestClient, db: Sess
     assert "Outreach" in resp.text
     assert "Draft outreach email (AI)" in resp.text
     assert "Not yet contacted" in resp.text
+
+
+# ── contacted_at stamping on stage advance ───────────────────────────────────
+
+
+def test_advance_to_contacted_stamps_contacted_at(client: TestClient, db: Session) -> None:
+    p = _make_prospect(db, pipeline_stage="lead")
+    client.post(f"/sales/{p.id}/stage", follow_redirects=False)
+    db.refresh(p)
+    assert p.pipeline_stage == "contacted"
+    assert p.contacted_at is not None
+
+
+def test_advance_does_not_overwrite_existing_contacted_at(client: TestClient, db: Session) -> None:
+    original = datetime(2026, 1, 2, 9, 0, 0)
+    p = _make_prospect(db, pipeline_stage="contacted", contacted_at=original)
+    client.post(f"/sales/{p.id}/stage", follow_redirects=False)
+    db.refresh(p)
+    assert p.pipeline_stage == "site_visit"
+    assert p.contacted_at == original
+
+
+def test_advance_lead_to_lost_does_not_stamp(client: TestClient, db: Session) -> None:
+    # Jump straight to "lost" (e.g. mark dead) — never counts as contacted.
+    p = _make_prospect(db, pipeline_stage="signed")
+    client.post(f"/sales/{p.id}/stage", follow_redirects=False)
+    db.refresh(p)
+    assert p.pipeline_stage == "lost"
+    assert p.contacted_at is None
+
+
+# ── contacted-date filter on the board ───────────────────────────────────────
+
+
+def test_contacted_date_filter_narrows_contacted_cards(client: TestClient, db: Session) -> None:
+    in_range = _make_prospect(
+        db,
+        company_name="In Range Co",
+        pipeline_stage="contacted",
+        contacted_at=datetime(2026, 3, 15, 12, 0),
+    )
+    out_range = _make_prospect(
+        db,
+        company_name="Out Range Co",
+        pipeline_stage="contacted",
+        contacted_at=datetime(2026, 1, 1, 12, 0),
+    )
+    raw_lead = _make_prospect(db, company_name="Pure Lead Co", pipeline_stage="lead")
+    resp = client.get("/sales/?contacted_from=2026-03-01&contacted_to=2026-03-31")
+    assert resp.status_code == 200
+    # Scope assertions to the Kanban board pane — the Locations tab lists every
+    # active prospect regardless of the board's date filter.
+    board = resp.text.split('id="locations-pane"')[0]
+    assert in_range.company_name in board
+    assert out_range.company_name not in board
+    # Un-contacted leads (NULL contacted_at) are always kept on the board.
+    assert raw_lead.company_name in board

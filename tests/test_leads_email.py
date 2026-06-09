@@ -138,3 +138,48 @@ def test_draft_email_htmx_returns_inline_card(client: TestClient, db: Session, m
     assert resp.status_code == 200
     assert "job-status-card" in resp.text
     assert db.query(AgentJob).filter_by(job_type="email_draft", prospect_id=p.id).count() == 1
+
+
+# ── contacted_at stamped on real send ────────────────────────────────────────
+
+
+def test_send_email_stamps_contacted_at(client: TestClient, db: Session, monkeypatch) -> None:
+    monkeypatch.setattr("app.routers.leads.email_sender.send_email", lambda **kw: None)
+    p = _make_prospect(db, contact_email="owner@bayfitness.com", pipeline_stage="lead")
+    job = _make_email_job(db, p)
+    client.post(
+        f"/leads/jobs/{job.id}/send",
+        data={"to_email": p.contact_email, "subject": "Hi", "body": "Body"},
+        follow_redirects=False,
+    )
+    db.refresh(p)
+    assert p.contacted_at is not None
+
+
+# ── Part 3: AI rewrite with feedback reuses the prior draft ──────────────────
+
+
+def test_rewrite_creates_new_email_job_with_feedback(
+    client: TestClient, db: Session, monkeypatch
+) -> None:
+    import json
+
+    monkeypatch.setattr("app.routers.leads.agent.run_email_draft_job", lambda job_id: None)
+    p = _make_prospect(db)
+    job = _make_email_job(db, p, draft_subject="Old subject", draft_body="Old body.")
+    resp = client.post(
+        f"/leads/jobs/{job.id}/rewrite",
+        data={"feedback": "Make it shorter.", "subject": "Edited subject", "body": "Edited body."},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    new_job = (
+        db.query(AgentJob).filter(AgentJob.job_type == "email_draft", AgentJob.id != job.id).first()
+    )
+    assert new_job is not None
+    assert new_job.prospect_id == p.id
+    params = json.loads(new_job.input_params)
+    assert params["feedback"] == "Make it shorter."
+    # Operator's live edits are carried into the rewrite, not the stored draft.
+    assert params["prev_subject"] == "Edited subject"
+    assert params["prev_body"] == "Edited body."

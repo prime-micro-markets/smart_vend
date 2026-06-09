@@ -98,6 +98,12 @@
   {% set last_sent_at = last_sent_at if last_sent_at is defined else None %}
   {% set draft_job = draft_job if draft_job is defined else None %}
   <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+    {% if prospect.contacted_at %}
+    <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle"
+          title="Date this prospect was contacted with a proposal">
+      <i class="bi bi-calendar-check me-1"></i>Contacted {{ prospect.contacted_at.strftime('%b %d, %Y') }}
+    </span>
+    {% endif %}
     {% if last_sent_at %}
     <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
       <i class="bi bi-send-check me-1"></i>Emailed {{ last_sent_at.strftime('%b %d, %Y') }}
