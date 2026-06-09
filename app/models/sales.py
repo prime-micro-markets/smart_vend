@@ -35,6 +35,9 @@ class Prospect(Base):
     source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     lost_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Date the prospect was first contacted with a proposal — stamped when an
+    # outreach email is sent or when the card is advanced into the Contacted stage.
+    contacted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 

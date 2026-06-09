@@ -756,6 +756,27 @@ def _build_email_draft_prompt(prospect: Prospect) -> str:
     )
 
 
+def _build_email_rewrite_prompt(
+    prospect: Prospect, prev_subject: str, prev_body: str, feedback: str
+) -> str:
+    """Re-draft an existing outreach email using operator feedback. Reuses the full
+    draft context (selling points, prospect details) and asks Claude to revise the
+    prior draft rather than start over — keeping what works."""
+    base = _build_email_draft_prompt(prospect)
+    return (
+        f"{base}\n\n"
+        f"---\n"
+        f"You previously drafted this email:\n"
+        f"Subject: {prev_subject}\n\n"
+        f"{prev_body}\n\n"
+        f"Revise that draft based on this feedback from the sender, keeping the parts "
+        f"that already work and only changing what the feedback asks for:\n"
+        f"{feedback}\n\n"
+        f"Return the revised email in the same format (Subject: <subject line>, a blank "
+        f"line, then the body)."
+    )
+
+
 def run_email_draft_job(job_id: int) -> None:
     """Background task: draft a personalized outreach email for a prospect."""
     with Session(engine) as db:
@@ -777,11 +798,25 @@ def run_email_draft_job(job_id: int) -> None:
 
             import anthropic  # type: ignore[import-untyped]
 
+            # A rewrite job carries operator feedback + the prior draft in
+            # input_params; otherwise this is a fresh first draft.
+            params = json.loads(job.input_params) if job.input_params else {}
+            feedback = (params.get("feedback") or "").strip()
+            if feedback:
+                prompt = _build_email_rewrite_prompt(
+                    prospect,
+                    params.get("prev_subject") or "",
+                    params.get("prev_body") or "",
+                    feedback,
+                )
+            else:
+                prompt = _build_email_draft_prompt(prospect)
+
             client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
             raw = client.messages.with_raw_response.create(
                 model=app_settings.get_str(db, "email_model"),
                 max_tokens=1024,
-                messages=[{"role": "user", "content": _build_email_draft_prompt(prospect)}],
+                messages=[{"role": "user", "content": prompt}],
             )
             response = raw.parse()
             job.tokens_used = response.usage.input_tokens + response.usage.output_tokens

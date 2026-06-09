@@ -278,6 +278,43 @@ def leads_draft_email(
     return RedirectResponse(url=f"/leads/jobs/{job.id}", status_code=303)
 
 
+@router.post("/jobs/{job_id}/rewrite", response_class=HTMLResponse)
+def leads_rewrite_email(
+    job_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    feedback: str = Form(...),
+    subject: str = Form(""),
+    body: str = Form(""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Re-draft an existing email with operator feedback. Reuses the previous draft
+    (with any manual edits passed back as ``subject``/``body``) as the starting point
+    and queues a fresh ``email_draft`` job carrying the feedback in ``input_params``."""
+    prev = db.get(AgentJob, job_id)
+    if not prev:
+        return Response(status_code=404)
+    new_job = AgentJob(
+        job_type="email_draft",
+        status="pending",
+        prospect_id=prev.prospect_id,
+        preview_mode=prev.preview_mode,
+        input_params=json.dumps(
+            {
+                "feedback": feedback,
+                "prev_subject": subject or (prev.draft_subject or ""),
+                "prev_body": body or (prev.draft_body or ""),
+            }
+        ),
+    )
+    db.add(new_job)
+    db.commit()
+    background_tasks.add_task(agent.run_email_draft_job, new_job.id)
+    # Land on the job-status page, which polls until the rewrite is ready and then
+    # links to "Review & Send" for the new draft (operator can refine again there).
+    return RedirectResponse(url=f"/leads/jobs/{new_job.id}", status_code=303)
+
+
 @router.post("/prospects/{prospect_id}/send-direct", response_class=HTMLResponse)
 def leads_send_direct(
     prospect_id: int,
@@ -324,9 +361,12 @@ def leads_send_direct(
         outcome="sent",
     )
     db.add(log)
-    # A real send moves a fresh lead into the "contacted" stage automatically.
+    # A real send moves a fresh lead into the "contacted" stage automatically and
+    # records the first-contact date for the pipeline card / date filter.
     if prospect.pipeline_stage == "lead":
         prospect.pipeline_stage = "contacted"
+    if prospect.contacted_at is None:
+        prospect.contacted_at = datetime.now()
     db.commit()
     return RedirectResponse(url=f"/sales/{prospect_id}", status_code=303)
 
@@ -386,9 +426,12 @@ def leads_send_email(
             outcome="sent",
         )
         db.add(log)
-        # A real send moves a fresh lead into the "contacted" stage automatically.
+        # A real send moves a fresh lead into the "contacted" stage automatically and
+        # records the first-contact date for the pipeline card / date filter.
         if prospect.pipeline_stage == "lead":
             prospect.pipeline_stage = "contacted"
+        if prospect.contacted_at is None:
+            prospect.contacted_at = datetime.now()
         db.commit()
         return RedirectResponse(url=f"/sales/{prospect.id}", status_code=303)
 
